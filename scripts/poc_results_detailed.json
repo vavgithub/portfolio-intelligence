@@ -1,0 +1,112 @@
+[
+  {
+    "name": "Rituparna Paul",
+    "portfolio": "https://www.behance.net/rit4design7603",
+    "reviewer": "Khushi Mistry",
+    "human_score": 1.0,
+    "ai_score": 2.0,
+    "diff": 1.0,
+    "within_1": true,
+    "recommendation": "Pass"
+  },
+  {
+    "name": "Nitin Singh",
+    "portfolio": "https://www.behance.net/nitinsingh75",
+    "reviewer": "Sushmitha V",
+    "human_score": 1.0,
+    "ai_score": 2.0,
+    "diff": 1.0,
+    "within_1": true,
+    "recommendation": "Pass"
+  },
+  {
+    "name": "Smita Prangya Mohanty",
+    "portfolio": "https://www.behance.net/smitaprangya",
+    "reviewer": "Khushi Mistry",
+    "human_score": 1.0,
+    "ai_score": 2.0,
+    "diff": 1.0,
+    "within_1": true,
+    "recommendation": "Pass"
+  },
+  {
+    "name": "Aditya Dahale",
+    "portfolio": "https://www.behance.net/adityadahale",
+    "reviewer": "Sushmitha V",
+    "human_score": 2.0,
+    "ai_score": 2.5,
+    "diff": 0.5,
+    "within_1": true,
+    "recommendation": "Pass"
+  },
+  {
+    "name": "Jagannathan S",
+    "portfolio": "https://www.behance.net/jagannathan94",
+    "reviewer": "Khushi Mistry",
+    "human_score": 2.0,
+    "ai_score": 1.0,
+    "diff": 1.0,
+    "within_1": true,
+    "recommendation": "Pass"
+  },
+  {
+    "name": "PRAGYA JAIN",
+    "portfolio": "https://www.behance.net/pragyajain05",
+    "reviewer": "Khushi Mistry",
+    "human_score": 3.0,
+    "ai_score": 2.0,
+    "diff": 1.0,
+    "within_1": true,
+    "recommendation": "Pass"
+  },
+  {
+    "name": "Suyash Prasad",
+    "portfolio": "https://www.behance.net/suyashprasad",
+    "reviewer": "Khushi Mistry",
+    "human_score": 3.0,
+    "ai_score": 3.0,
+    "diff": 0.0,
+    "within_1": true,
+    "recommendation": "Shortlist"
+  },
+  {
+    "name": "Arshmit Singh",
+    "portfolio": "https://www.behance.net/arshmit",
+    "reviewer": "Eshan Bansal",
+    "human_score": 3.0,
+    "ai_score": 3.5,
+    "diff": 0.5,
+    "within_1": true,
+    "recommendation": "Shortlist"
+  },
+  {
+    "name": "akansha tomar",
+    "portfolio": "https://www.behance.net/tomarakansce67",
+    "reviewer": "Eshan Bansal",
+    "human_score": 3.0,
+    "ai_score": 2.0,
+    "diff": 1.0,
+    "within_1": true,
+    "recommendation": "Pass"
+  },
+  {
+    "name": "Shreya Jain",
+    "portfolio": "https://www.behance.net/gallery/224806985/portfolio-2025-branding-typography-infographic",
+    "reviewer": "Eshan Bansal",
+    "human_score": 4.0,
+    "ai_score": 4.0,
+    "diff": 0.0,
+    "within_1": true,
+    "recommendation": "Hire"
+  },
+  {
+    "name": "Devi Priyandari",
+    "portfolio": "https://www.behance.net/devipriyandari",
+    "reviewer": "Khushi Mistry",
+    "human_score": 5.0,
+    "ai_score": 3.0,
+    "diff": 2.0,
+    "within_1": false,
+    "recommendation": "Shortlist"
+  }
+]

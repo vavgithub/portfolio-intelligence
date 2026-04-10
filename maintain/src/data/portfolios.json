@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Suraj Dhamne",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/sadlycreative",
+    "score": 4,
+    "comment": "",
+    "reviewer": "Kshitija Chavan"
+  },
+  {
+    "name": "Sheetal Thapa",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/Sheetal-Thapa",
+    "score": 5,
+    "comment": "",
+    "reviewer": "Kshitija Chavan"
+  },
+  {
+    "name": "Vignesh V",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/vigneshvijayan1209",
+    "score": 4,
+    "comment": "",
+    "reviewer": "Kshitija Chavan"
+  },
+  {
+    "name": "Aman Dave",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/gallery/225944277/Assets-for-Bombay-Shaving-Company",
+    "score": 1,
+    "comment": "Portfolio link isn't opening",
+    "reviewer": "Kshitija Chavan"
+  },
+  {
+    "name": "Akansha Singh",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/akanshasinghonly27",
+    "score": 2,
+    "comment": "",
+    "reviewer": "Kshitija Chavan"
+  }
+]

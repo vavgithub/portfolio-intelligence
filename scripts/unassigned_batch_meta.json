@@ -1,0 +1,39 @@
+{
+  "count": 5,
+  "source": "scripts/rudra_kshitija_all_reports.json",
+  "excluded_maintain_files": [
+    "maintain/src/data/portfolios_reviewer1.json",
+    "maintain/src/data/portfolios_reviewer2.json",
+    "maintain/src/data/portfolios.json",
+    "maintain/src/data/portfolios_unassigned.json",
+    "maintain/src/data/portfolios_unassigned10.json"
+  ],
+  "pool_size_before_pick": 44,
+  "picked": [
+    {
+      "name": "Hridayesh Thakur",
+      "portfolio_url": "https://www.behance.net/hridayeshthakur10",
+      "ai_score": 3.0
+    },
+    {
+      "name": "Raj Prasanth",
+      "portfolio_url": "https://www.behance.net/rajprasanth3",
+      "ai_score": 1.5
+    },
+    {
+      "name": "akansha tomar",
+      "portfolio_url": "https://www.behance.net/tomarakansce67",
+      "ai_score": 2.0
+    },
+    {
+      "name": "Vishal Raj",
+      "portfolio_url": "https://www.behance.net/vrdesign3",
+      "ai_score": 3.0
+    },
+    {
+      "name": "Anamika Kashyap",
+      "portfolio_url": "https://www.behance.net/anamikakashyap3",
+      "ai_score": 2.0
+    }
+  ]
+}

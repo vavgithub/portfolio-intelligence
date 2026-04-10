@@ -1,0 +1,7 @@
+[
+  {"name": "Alice", "jobProfile": "UI/UX", "portfolioUrl": "https://behance.net/alice", "score": 4, "reviewer": "Shubham", "comment": "Strong case studies."},
+  {"name": "Bob", "jobProfile": "Brand Designer", "portfolioUrl": "https://dribbble.com/bob", "score": 3, "reviewer": "Kiran", "comment": ""},
+  {"name": "Carol", "jobProfile": "Video Editor", "portfolioUrl": "https://vimeo.com/carol", "score": 5, "reviewer": "Shubham", "comment": ""},
+  {"name": "Dave", "jobProfile": "UI/UX", "portfolioUrl": "https://figma.com/dave", "score": 1, "reviewer": "Kiran", "comment": "Cannot view portfolio - link broken."},
+  {"name": "Eve", "jobProfile": "Motion Designer", "portfolioUrl": "https://behance.net/eve", "score": 2, "reviewer": "San", "comment": "Page not found."}
+]

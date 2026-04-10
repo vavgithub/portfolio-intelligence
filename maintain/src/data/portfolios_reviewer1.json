@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Mohit Kumar",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/mohitkumarvisual",
+    "score": 2,
+    "comment": "Just graphics no branding",
+    "reviewer": "Rudra Sindwani"
+  },
+  {
+    "name": "Lakshya Chauhan",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/designwithlakshh",
+    "score": 4,
+    "comment": "Good with UI & Brand Identity both ",
+    "reviewer": "Rudra Sindwani"
+  },
+  {
+    "name": "Bhavin Kriplani",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/bhavi1993k8105",
+    "score": 2,
+    "comment": "",
+    "reviewer": "Rudra Sindwani"
+  },
+  {
+    "name": "Jayshikha Rani",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/gallery/239412847/Portfolio",
+    "score": 2,
+    "comment": "",
+    "reviewer": "Rudra Sindwani"
+  },
+  {
+    "name": "Purbasa Banerjee",
+    "jobProfile": "Brand Designer",
+    "portfolio": "https://www.behance.net/artfulfabpu93",
+    "score": 4,
+    "comment": "",
+    "reviewer": "Rudra Sindwani"
+  }
+]
