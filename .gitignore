@@ -1,0 +1,11 @@
+venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+snapshots/
+report_*.json
+data/
+*.csv
+service_account.json
+.env.all
