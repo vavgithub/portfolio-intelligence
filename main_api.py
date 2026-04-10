@@ -11,16 +11,33 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import FastAPI, HTTPException, Request
+import httpx
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from google.cloud import firestore
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.main import run_portfolio_intelligence_pipeline
 
-db = firestore.Client(project="gen-lang-client-0733020613")
+
+async def _save_to_geode(candidate_id: str, job_id: str, result: dict):
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                "http://localhost:8008/api/v1/hr/save-ai-score",
+                json={
+                    "candidateId": candidate_id,
+                    "jobId": job_id,
+                    "aiScore": result.get("score"),
+                    "aiReasoning": result.get("reasoning"),
+                    "aiRecommendation": result.get("recommendation"),
+                },
+                timeout=30.0
+            )
+    except Exception as e:
+        print(f"Failed to save to Geode: {e}")
+
 
 app = FastAPI()
 app.add_middleware(
@@ -74,6 +91,7 @@ class ScoreRequest(BaseModel):
     behance_url: str = Field(..., description="Behance portfolio URL")
     candidate_id: str = Field(..., description="External candidate identifier")
     role: str = Field(..., description="e.g. brand_identity_designer")
+    job_id: str = Field(default="", description="Job id for Geode save-ai-score")
 
 
 @app.get("/health")
@@ -81,27 +99,11 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _run_pipeline_and_store(candidate_id: str, behance_url: str, role: str) -> None:
+def _run_pipeline_sync(behance_url: str, role: str) -> dict | None:
     try:
         report = run_portfolio_intelligence_pipeline(behance_url, role)
-    except Exception as e:
-        msg = str(e)
-        ml = msg.lower()
-        if (
-            "net::err" in ml
-            or "cannot navigate" in ml
-            or "invalid url" in ml
-        ):
-            db.collection("ai_scores").document(candidate_id).set({
-                "status": "skipped",
-                "skip_reason": "Invalid or unreachable portfolio URL",
-            })
-        else:
-            db.collection("ai_scores").document(candidate_id).set({
-                "status": "skipped",
-                "skip_reason": msg,
-            })
-        return
+    except Exception:
+        return None
 
     fc = report.get("final_scorecard") or {}
     skipped = report.get("status") == "skipped"
@@ -112,39 +114,28 @@ def _run_pipeline_and_store(candidate_id: str, behance_url: str, role: str) -> N
         "seniority": str(fc.get("seniority_estimate", "")),
     }
     if skipped:
-        sr = report.get("skip_reason")
-        if not (isinstance(sr, str) and sr.strip()):
-            sr = (report.get("candidate_identity") or {}).get("skip_reason") or ""
-        skip_reason = str(sr).strip() or "skipped"
-        db.collection("ai_scores").document(candidate_id).set({
-            "status": "skipped",
-            "skip_reason": skip_reason,
-        })
-    else:
-        db.collection("ai_scores").document(candidate_id).set({
-            "status": "success",
-            "score": result["score"],
-            "recommendation": result["recommendation"],
-            "reasoning": result["reasoning"],
-            "seniority": result.get("seniority", ""),
-        })
+        return None
+    return result
 
 
-async def _background_score(candidate_id: str, behance_url: str, role: str) -> None:
-    await asyncio.to_thread(_run_pipeline_and_store, candidate_id, behance_url, role)
+async def _background_score(
+    candidate_id: str, job_id: str, behance_url: str, role: str
+) -> None:
+    result = await asyncio.to_thread(_run_pipeline_sync, behance_url, role)
+    if result is not None:
+        await _save_to_geode(candidate_id, job_id, result)
 
 
 @app.post("/score")
 async def score(body: ScoreRequest) -> dict:
     asyncio.create_task(
-        _background_score(body.candidate_id, body.behance_url, body.role)
+        _background_score(
+            body.candidate_id, body.job_id, body.behance_url, body.role
+        )
     )
     return {"status": "processing", "candidate_id": body.candidate_id}
 
 
 @app.get("/score-status/{candidate_id}")
 async def score_status(candidate_id: str) -> dict:
-    doc = db.collection("ai_scores").document(candidate_id).get()
-    if not doc.exists:
-        return {"status": "processing", "candidate_id": candidate_id}
-    return doc.to_dict()
+    return {"status": "processing", "candidate_id": candidate_id}
