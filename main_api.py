@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 
-import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,24 +19,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.main import run_portfolio_intelligence_pipeline
 
-
-async def _save_to_geode(candidate_id: str, job_id: str, result: dict):
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                "http://13.232.228.125:8008/api/v1/hr/save-ai-score",
-                json={
-                    "candidateId": candidate_id,
-                    "jobId": job_id,
-                    "aiScore": result.get("score"),
-                    "aiReasoning": result.get("reasoning"),
-                    "aiRecommendation": result.get("recommendation"),
-                },
-                timeout=30.0
-            )
-    except Exception as e:
-        print(f"Failed to save to Geode: {e}")
-
+# Global dict to store results
+results_store = {}
 
 app = FastAPI()
 app.add_middleware(
@@ -91,7 +74,6 @@ class ScoreRequest(BaseModel):
     behance_url: str = Field(..., description="Behance portfolio URL")
     candidate_id: str = Field(..., description="External candidate identifier")
     role: str = Field(..., description="e.g. brand_identity_designer")
-    job_id: str = Field(default="", description="Job id for Geode save-ai-score")
 
 
 @app.get("/health")
@@ -118,24 +100,27 @@ def _run_pipeline_sync(behance_url: str, role: str) -> dict | None:
     return result
 
 
-async def _background_score(
-    candidate_id: str, job_id: str, behance_url: str, role: str
-) -> None:
+async def _background_score(candidate_id: str, behance_url: str, role: str) -> None:
     result = await asyncio.to_thread(_run_pipeline_sync, behance_url, role)
     if result is not None:
-        await _save_to_geode(candidate_id, job_id, result)
+        results_store[candidate_id] = {
+            "status": "completed",
+            "score": result.get("score"),
+            "reasoning": result.get("reasoning"),
+            "recommendation": result.get("recommendation"),
+        }
 
 
 @app.post("/score")
 async def score(body: ScoreRequest) -> dict:
     asyncio.create_task(
-        _background_score(
-            body.candidate_id, body.job_id, body.behance_url, body.role
-        )
+        _background_score(body.candidate_id, body.behance_url, body.role)
     )
     return {"status": "processing", "candidate_id": body.candidate_id}
 
 
 @app.get("/score-status/{candidate_id}")
 async def score_status(candidate_id: str) -> dict:
+    if candidate_id in results_store:
+        return results_store[candidate_id]
     return {"status": "processing", "candidate_id": candidate_id}
