@@ -112,11 +112,12 @@ async def _background_score(candidate_id: str, behance_url: str, role: str) -> N
 
 
 @app.post("/score")
-async def score(body: ScoreRequest) -> dict:
+async def score(request: ScoreRequest) -> dict:
+    results_store.pop(request.candidate_id, None)
     asyncio.create_task(
-        _background_score(body.candidate_id, body.behance_url, body.role)
+        _background_score(request.candidate_id, request.behance_url, request.role)
     )
-    return {"status": "processing", "candidate_id": body.candidate_id}
+    return {"status": "processing", "candidate_id": request.candidate_id}
 
 
 @app.get("/score-status/{candidate_id}")
