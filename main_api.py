@@ -25,7 +25,7 @@ async def _save_to_geode(candidate_id: str, job_id: str, result: dict):
     try:
         async with httpx.AsyncClient() as client:
             await client.post(
-                "http://localhost:8008/api/v1/hr/save-ai-score",
+                "http://13.232.228.125:8008/api/v1/hr/save-ai-score",
                 json={
                     "candidateId": candidate_id,
                     "jobId": job_id,
