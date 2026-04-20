@@ -2,10 +2,11 @@ import base64
 import json
 import os
 import re
+import tempfile
 from dotenv import load_dotenv
 
-from google import genai
-from google.genai import types
+import vertexai
+from vertexai.generative_models import GenerativeModel, Part, GenerationConfig
 
 load_dotenv()
 
@@ -20,11 +21,17 @@ except Exception:
 # Single source of truth for report JSON (gemini-2.0-flash deprecated; use 2.5-flash)
 AI_MODEL_NAME = "gemini-2.5-flash"
 
-gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-genai_client = None
-if gemini_key:
-    genai_client = genai.Client(api_key=gemini_key)
-    print(f"📡 Using {AI_MODEL_NAME} for Visual Analysis...")
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "").strip()
+GCP_REGION = os.getenv("GCP_REGION", "us-central1").strip()
+_creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", "").strip()
+if _creds_json:
+    _creds_dict = json.loads(_creds_json)
+    _tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+    json.dump(_creds_dict, _tmp)
+    _tmp.flush()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _tmp.name
+vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
+genai_client = GenerativeModel("gemini-2.5-flash-preview-0514")
 
 
 def get_model_for_role(candidate_role: str) -> str:
@@ -104,8 +111,8 @@ def analyze_portfolio_visuals(screenshot_paths, project_title, case_study_text="
     model_name = get_model_for_role(candidate_role)
     if not screenshot_paths:
         return {"error": "No screenshots provided", "model": model_name}
-    if not gemini_key or not genai_client:
-        return {"error": "GEMINI_API_KEY not set.", "score": 0, "model": model_name}
+    if not genai_client:
+        return {"error": "Vertex AI client not initialized.", "score": 0, "model": model_name}
 
     specs_context = ""
     if design_specs:
@@ -253,20 +260,17 @@ def analyze_portfolio_visuals(screenshot_paths, project_title, case_study_text="
         prompt = BRAND_IDENTITY_EXPERT_FRAMEWORK.strip() + "\n\n" + prompt
 
     target_screenshots = screenshot_paths[:6]
-    parts = [types.Part.from_text(text=prompt)]
+    parts = [Part.from_text(prompt)]
     for path in target_screenshots:
         b64 = encode_image(path)
         if b64:
-            parts.append(types.Part.from_bytes(data=base64.b64decode(b64), mime_type="image/jpeg"))
+            parts.append(Part.from_data(data=base64.b64decode(b64), mime_type="image/jpeg"))
 
     print(f"🤖 Using model: {model_name}")
     try:
-        response = genai_client.models.generate_content(
-            model=model_name,
+        response = genai_client.generate_content(
             contents=parts,
-            config=types.GenerateContentConfig(
-                temperature=0
-            ),
+            generation_config=GenerationConfig(temperature=0),
         )
         text = response.text
         if not text:

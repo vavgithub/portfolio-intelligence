@@ -4,10 +4,7 @@ import re
 from urllib.parse import urlparse, urljoin, unquote, parse_qs, urlencode, urlunparse
 from playwright.sync_api import sync_playwright
 
-try:
-    from google.genai import types as genai_types
-except ImportError:
-    genai_types = None
+from vertexai.generative_models import Part as genai_types_Part
 
 
 def _figma_design_url_to_embed_50(url: str) -> str:
@@ -121,14 +118,8 @@ Reply with exactly one line: only three numbers separated by commas. Example: 2,
 Do not include any other text, explanation, or punctuation."""
 
     try:
-        if genai_types is not None:
-            contents = [genai_types.Part.from_text(text=prompt)]
-        else:
-            contents = prompt
-        response = genai_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents,
-        )
+        contents = [genai_types_Part.from_text(prompt)]
+        response = genai_client.generate_content(contents=contents)
         text = (response.text or "").strip()
         # Parse 1-based numbers (e.g. "2, 5, 7" or "2,5,7" or "2. 5. 7")
         numbers = re.findall(r"\d+", text)
