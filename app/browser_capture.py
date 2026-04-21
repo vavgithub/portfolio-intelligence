@@ -898,7 +898,6 @@ class PortfolioBrowser:
             print(f"  📸 Snapshotting (reusing open page): {url[:80]}...")
         else:
             page = context.new_page()
-            print(f"  🔍 DEBUG: page created, context alive: {not context._impl_obj._closed}")
             print(f"  📸 Snapshotting: {url}")
         try:
             if "figma.com" in url and ("/proto/" in url or "/deck/" in url) and "hide-ui=1" not in url:
@@ -980,11 +979,7 @@ class PortfolioBrowser:
                 case_study_text = case_study_text[:5000]
 
                 # Behance lazy-load: scroll once to bottom (and back) so images load before we capture
-                if "behance.net" in url:
-                    for scroll_y in [0, max_scroll, 0]:
-                        page.evaluate(f"window.scrollTo(0, {scroll_y})")
-                        time.sleep(0.5)
-                    time.sleep(1.0)
+                # (Disabled) Behance lazy-load scroll loop
 
                 # Disable CSS animations/transitions for deterministic screenshots
                 page.add_style_tag(content="* { animation: none !important; transition: none !important; }")
@@ -1001,6 +996,8 @@ class PortfolioBrowser:
                     step = max(viewport_height, (range_height - viewport_height) // max(1, num_shots - 1))
                     positions = [section_top + i * step for i in range(num_shots)]
                     positions[-1] = min(max_scroll, scroll_end - viewport_height) if scroll_end - section_top > viewport_height else positions[-1]
+                if "behance.net" in url:
+                    positions = positions[:3]
 
                 # Timeout for image loading so one slow/broken image doesn't hang the run
                 IMAGE_WAIT_TIMEOUT_MS = 5000
@@ -1030,9 +1027,7 @@ class PortfolioBrowser:
         finally:
             try:
                 if existing_page is None and page is not None:
-                    print(f"  🔍 DEBUG: about to close page, context alive: {not context._impl_obj._closed}")
                     page.close()
-                    print(f"  🔍 DEBUG: page closed, context alive: {not context._impl_obj._closed}")
             except Exception:
                 pass
         return screenshots, case_study_text
@@ -1075,8 +1070,6 @@ class PortfolioBrowser:
                         '--disable-setuid-sandbox',
                         '--disable-dev-shm-usage',
                         '--disable-gpu',
-                        '--no-zygote',
-                        '--single-process',
                     ],
                 )
                 context = browser.new_context(viewport={"width": 1440, "height": 900})
@@ -1092,6 +1085,8 @@ class PortfolioBrowser:
                 time.sleep(2)
             elif platform == "figma":
                 time.sleep(4)
+            elif platform == "behance":
+                time.sleep(2)
             print("📋 Extracting profile metadata...")
             metadata = self.extract_profile_metadata(page, platform)
             metadata["url"] = url
