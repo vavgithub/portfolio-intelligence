@@ -891,151 +891,144 @@ class PortfolioBrowser:
         return part_idx
 
     def snapshot_project(self, context, url, filename_prefix, capture_section_only=False, candidate_role=None, existing_page=None):
+        screenshots = []
+        case_study_text = ""
+        if existing_page is not None:
+            page = existing_page
+            print(f"  📸 Snapshotting (reusing open page): {url[:80]}...")
+        else:
+            page = context.new_page()
+            print(f"  📸 Snapshotting: {url}")
         try:
-            screenshots = []
-            case_study_text = ""
-            if existing_page is not None:
-                page = existing_page
-                print(f"  📸 Snapshotting (reusing open page): {url[:80]}...")
-            else:
-                page = context.new_page()
-                print(f"  📸 Snapshotting: {url}")
-
-            try:
-                if "figma.com" in url and ("/proto/" in url or "/deck/" in url) and "hide-ui=1" not in url:
-                    url = url + ("&" if "?" in url else "?") + "hide-ui=1"
-                # Use lighter wait for URLs that never reach networkidle (Figma, Google Docs, Drive)
-                is_heavy = any(k in url for k in ["figma.com", "docs.google.com", "drive.google.com"])
-                if existing_page is None:
-                    if "behance.net" in url:
-                        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                        time.sleep(1.5)
-                    else:
-                        wait_until = "domcontentloaded" if is_heavy else "networkidle"
-                        page.goto(url, wait_until=wait_until, timeout=30000)
-                        if is_heavy:
-                            time.sleep(3)  # Give canvas-based apps time to render
-                elif is_heavy:
-                    time.sleep(1)  # Page already open; brief settle
-
-                # Figma /design/, /file/, or embed: use zoom dropdown then 2D grid (persistent Chrome context)
-                is_figma_design_file = (
-                    ("figma.com" in url and ("/design/" in url or "/file/" in url))
-                    or "embed.figma.com" in url
-                )
-                if is_figma_design_file:
-                    vw = page.viewport_size.get("width", 1440)
-                    vh = page.viewport_size.get("height", 900)
-                    print("  ⏳ Setting zoom to 50% (dropdown)...")
-                    self._figma_set_zoom_50_via_dropdown(page, vw, vh)
-                    print("  ⏳ Waiting for zoom to apply...")
-                    self._figma_wait_for_zoom_applied(page, max_wait_sec=10)
-                    time.sleep(1.0)
-                    print("  📸 Capturing 2D grid (top to bottom, left to right).")
-                    self._figma_capture_2d_grid(page, filename_prefix, 0, screenshots, vw, vh, max_shots=9)
-                    try:
-                        main_content = page.query_selector("main, article, [class*='canvas']")
-                        case_study_text = main_content.inner_text().strip()[:5000] if main_content else ""
-                    except Exception:
-                        case_study_text = ""
+            if "figma.com" in url and ("/proto/" in url or "/deck/" in url) and "hide-ui=1" not in url:
+                url = url + ("&" if "?" in url else "?") + "hide-ui=1"
+            # Use lighter wait for URLs that never reach networkidle (Figma, Google Docs, Drive)
+            is_heavy = any(k in url for k in ["figma.com", "docs.google.com", "drive.google.com"])
+            if existing_page is None:
+                if "behance.net" in url:
+                    page.goto(url, wait_until="load", timeout=30000)
+                    time.sleep(3)
                 else:
-                    total_height = page.evaluate("document.body.scrollHeight")
-                    viewport_height = page.viewport_size["height"]
-                    max_scroll = max(0, total_height - viewport_height)
+                    wait_until = "domcontentloaded" if is_heavy else "networkidle"
+                    page.goto(url, wait_until=wait_until, timeout=60000)
+                    if is_heavy:
+                        time.sleep(3)  # Give canvas-based apps time to render
+            elif is_heavy:
+                time.sleep(1)  # Page already open; brief settle
 
-                    # When we're snapshotting the whole portfolio as one "project", capture only from "FEATURED CASES" onward (skip About me, My Canvas, etc.)
-                    section_top = 0
-                    section_height = total_height
-                    if capture_section_only and candidate_role:
-                        section_bounds = page.evaluate("""() => {
-                            const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="title"], [class*="Title"]'));
-                            const featuredHeading = headings.find(h => {
-                                const t = (h.textContent || '').trim();
-                                return /featured\\s*cases|featured cases/i.test(t);
-                            });
-                            if (!featuredHeading) return null;
-                            const startY = featuredHeading.getBoundingClientRect().top + window.scrollY;
-                            let endY = startY + 6000;
-                            const afterHeadings = headings.filter(h => {
-                                const y = h.getBoundingClientRect().top + window.scrollY;
-                                return y > startY + 100;
-                            });
-                            const stopTitle = afterHeadings.find(h => /services|let'?s?\\s*work|together|contact/i.test((h.textContent || '').trim()));
-                            if (stopTitle) {
-                                const stopY = stopTitle.getBoundingClientRect().top + window.scrollY;
-                                if (stopY > startY) endY = Math.min(endY, stopY);
-                            }
-                            return { top: startY, height: Math.max(400, endY - startY) };
-                        }""")
-                        if section_bounds and isinstance(section_bounds, dict) and section_bounds.get("height", 0) >= 200:
-                            section_top = max(0, int(section_bounds["top"]))
-                            section_height = max(viewport_height, int(section_bounds["height"]))
-                            print(f"  📌 Capturing from FEATURED CASES only (scroll {section_top}–{section_top + section_height}px)")
-
-                    # Extract text for OCR/Context (from full page or section)
-                    main_content = page.query_selector("main, article, .project-canvas, #project-content, #main-content")
-                    if main_content:
-                        case_study_text = main_content.inner_text().strip()
-                    else:
-                        case_study_text = page.locator("body").inner_text().strip()
-                    case_study_text = case_study_text[:5000]
-
-                    # Behance lazy-load: scroll once to bottom (and back) so images load before we capture
-                    if "behance.net" in url:
-                        for scroll_y in [0, max_scroll, 0]:
-                            page.evaluate(f"window.scrollTo(0, {scroll_y})")
-                            time.sleep(0.5)
-                        time.sleep(1.0)
-
-                    # Disable CSS animations/transitions for deterministic screenshots
-                    page.add_style_tag(content="* { animation: none !important; transition: none !important; }")
-
-                    # Scroll range: full page or only the section (when capture_section_only)
-                    scroll_end = section_top + section_height
-                    scroll_end = min(scroll_end, total_height)
-                    range_height = scroll_end - section_top
-                    if range_height < viewport_height:
-                        positions = [section_top]
-                    else:
-                        num_shots = 5 if range_height < 4000 else (8 if range_height <= 8000 else 12)
-                        num_shots = min(num_shots, max(1, (range_height + viewport_height - 1) // viewport_height))
-                        step = max(viewport_height, (range_height - viewport_height) // max(1, num_shots - 1))
-                        positions = [section_top + i * step for i in range(num_shots)]
-                        positions[-1] = min(max_scroll, scroll_end - viewport_height) if scroll_end - section_top > viewport_height else positions[-1]
-
-                    # Timeout for image loading so one slow/broken image doesn't hang the run
-                    IMAGE_WAIT_TIMEOUT_MS = 5000
-
-                    for i, scroll_y in enumerate(positions):
-                        page.evaluate(f"window.scrollTo(0, {scroll_y})")
-                        if not is_heavy:
-                            try:
-                                page.wait_for_load_state("networkidle", timeout=2000)
-                            except Exception:
-                                pass
-                        page.evaluate(f"""() => {{
-                            const images = document.querySelectorAll('img');
-                            const incomplete = Array.from(images).filter(img => !img.complete);
-                            const loaded = Promise.all(incomplete.map(img =>
-                                new Promise(resolve => {{ img.onload = img.onerror = resolve; }})));
-                            const timeout = new Promise(resolve => setTimeout(resolve, {IMAGE_WAIT_TIMEOUT_MS}));
-                            return Promise.race([loaded, timeout]);
-                        }}""")
-                        time.sleep(0.7)
-                        path = os.path.join(self.current_snapshots_dir, f"{filename_prefix}_part_{i}.png")
-                        page.screenshot(path=path, full_page=False)
-                        screenshots.append(path)
-            finally:
+            # Figma /design/, /file/, or embed: use zoom dropdown then 2D grid (persistent Chrome context)
+            is_figma_design_file = (
+                ("figma.com" in url and ("/design/" in url or "/file/" in url))
+                or "embed.figma.com" in url
+            )
+            if is_figma_design_file:
+                vw = page.viewport_size.get("width", 1440)
+                vh = page.viewport_size.get("height", 900)
+                print("  ⏳ Setting zoom to 50% (dropdown)...")
+                self._figma_set_zoom_50_via_dropdown(page, vw, vh)
+                print("  ⏳ Waiting for zoom to apply...")
+                self._figma_wait_for_zoom_applied(page, max_wait_sec=10)
+                time.sleep(1.0)
+                print("  📸 Capturing 2D grid (top to bottom, left to right).")
+                self._figma_capture_2d_grid(page, filename_prefix, 0, screenshots, vw, vh, max_shots=9)
                 try:
-                    if existing_page is None and page is not None:
-                        page.close()
+                    main_content = page.query_selector("main, article, [class*='canvas']")
+                    case_study_text = main_content.inner_text().strip()[:5000] if main_content else ""
                 except Exception:
-                    pass
+                    case_study_text = ""
+            else:
+                total_height = page.evaluate("document.body.scrollHeight")
+                viewport_height = page.viewport_size["height"]
+                max_scroll = max(0, total_height - viewport_height)
 
-            return screenshots, case_study_text
+                # When we're snapshotting the whole portfolio as one "project", capture only from "FEATURED CASES" onward (skip About me, My Canvas, etc.)
+                section_top = 0
+                section_height = total_height
+                if capture_section_only and candidate_role:
+                    section_bounds = page.evaluate("""() => {
+                        const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="title"], [class*="Title"]'));
+                        const featuredHeading = headings.find(h => {
+                            const t = (h.textContent || '').trim();
+                            return /featured\\s*cases|featured cases/i.test(t);
+                        });
+                        if (!featuredHeading) return null;
+                        const startY = featuredHeading.getBoundingClientRect().top + window.scrollY;
+                        let endY = startY + 6000;
+                        const afterHeadings = headings.filter(h => {
+                            const y = h.getBoundingClientRect().top + window.scrollY;
+                            return y > startY + 100;
+                        });
+                        const stopTitle = afterHeadings.find(h => /services|let'?s?\\s*work|together|contact/i.test((h.textContent || '').trim()));
+                        if (stopTitle) {
+                            const stopY = stopTitle.getBoundingClientRect().top + window.scrollY;
+                            if (stopY > startY) endY = Math.min(endY, stopY);
+                        }
+                        return { top: startY, height: Math.max(400, endY - startY) };
+                    }""")
+                    if section_bounds and isinstance(section_bounds, dict) and section_bounds.get("height", 0) >= 200:
+                        section_top = max(0, int(section_bounds["top"]))
+                        section_height = max(viewport_height, int(section_bounds["height"]))
+                        print(f"  📌 Capturing from FEATURED CASES only (scroll {section_top}–{section_top + section_height}px)")
+
+                # Extract text for OCR/Context (from full page or section)
+                main_content = page.query_selector("main, article, .project-canvas, #project-content, #main-content")
+                if main_content:
+                    case_study_text = main_content.inner_text().strip()
+                else:
+                    case_study_text = page.locator("body").inner_text().strip()
+                case_study_text = case_study_text[:5000]
+
+                # Behance lazy-load: scroll once to bottom (and back) so images load before we capture
+                if "behance.net" in url:
+                    for scroll_y in [0, max_scroll, 0]:
+                        page.evaluate(f"window.scrollTo(0, {scroll_y})")
+                        time.sleep(0.5)
+                    time.sleep(1.0)
+
+                # Disable CSS animations/transitions for deterministic screenshots
+                page.add_style_tag(content="* { animation: none !important; transition: none !important; }")
+
+                # Scroll range: full page or only the section (when capture_section_only)
+                scroll_end = section_top + section_height
+                scroll_end = min(scroll_end, total_height)
+                range_height = scroll_end - section_top
+                if range_height < viewport_height:
+                    positions = [section_top]
+                else:
+                    num_shots = 5 if range_height < 4000 else (8 if range_height <= 8000 else 12)
+                    num_shots = min(num_shots, max(1, (range_height + viewport_height - 1) // viewport_height))
+                    step = max(viewport_height, (range_height - viewport_height) // max(1, num_shots - 1))
+                    positions = [section_top + i * step for i in range(num_shots)]
+                    positions[-1] = min(max_scroll, scroll_end - viewport_height) if scroll_end - section_top > viewport_height else positions[-1]
+
+                # Timeout for image loading so one slow/broken image doesn't hang the run
+                IMAGE_WAIT_TIMEOUT_MS = 5000
+
+                for i, scroll_y in enumerate(positions):
+                    page.evaluate(f"window.scrollTo(0, {scroll_y})")
+                    if not is_heavy:
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=2000)
+                        except Exception:
+                            pass
+                    page.evaluate(f"""() => {{
+                        const images = document.querySelectorAll('img');
+                        const incomplete = Array.from(images).filter(img => !img.complete);
+                        const loaded = Promise.all(incomplete.map(img =>
+                            new Promise(resolve => {{ img.onload = img.onerror = resolve; }})));
+                        const timeout = new Promise(resolve => setTimeout(resolve, {IMAGE_WAIT_TIMEOUT_MS}));
+                        return Promise.race([loaded, timeout]);
+                    }}""")
+                    time.sleep(0.7)
+                    path = os.path.join(self.current_snapshots_dir, f"{filename_prefix}_part_{i}.png")
+                    page.screenshot(path=path, full_page=False)
+                    screenshots.append(path)
+
         except Exception as e:
             print(f"  ⚠️ Snapshot failed for {url}: {e}")
-            return [], ""
+        finally:
+            page.close()
+        return screenshots, case_study_text
 
     def full_pipeline_scan(self, url, run_id="", candidate_role=None, genai_client=None):
         platform = self.identify_platform(url)
@@ -1161,24 +1154,14 @@ class PortfolioBrowser:
             while len(final_projects) < 3 and queue:
                 project = queue.pop(0)
                 safe_title = "".join([c if c.isalnum() else "_" for c in project["title"]])[:30]
-                with sync_playwright() as p_snap:
-                    snap_browser = p_snap.chromium.launch(
-                        headless=True,
-                        args=['--no-sandbox','--disable-setuid-sandbox',
-                              '--disable-dev-shm-usage','--disable-gpu',
-                              '--no-zygote','--single-process'],
-                    )
-                    snap_context = snap_browser.new_context(viewport={"width": 1440, "height": 900})
-                    try:
-                        imgs, text = self.snapshot_project(
-                            snap_context, project["url"], f"proj_{slot}_{safe_title}",
-                            capture_section_only=project.get("capture_section_only", False),
-                            candidate_role=candidate_role,
-                            existing_page=None
-                        )
-                    finally:
-                        snap_browser.close()
-
+                imgs, text = self.snapshot_project(
+                    context, project["url"], f"proj_{slot}_{safe_title}",
+                    capture_section_only=project.get("capture_section_only", False),
+                    candidate_role=candidate_role,
+                    existing_page=reuse_page
+                )
+                if reuse_page is not None:
+                    reuse_page = None
                 if imgs:
                     project["screenshots"] = imgs
                     project["case_study_text"] = text
