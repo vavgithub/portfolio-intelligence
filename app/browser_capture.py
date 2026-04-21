@@ -334,9 +334,9 @@ class PortfolioBrowser:
         
         if platform == "behance":
             # Scroll multiple times to trigger lazy loading
-            for _ in range(5):
+            for _ in range(3):
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(1.5)
+                time.sleep(0.8)
             
             # Wait for any project links to appear
             try:
@@ -908,8 +908,8 @@ class PortfolioBrowser:
                 is_heavy = any(k in url for k in ["figma.com", "docs.google.com", "drive.google.com"])
                 if existing_page is None:
                     if "behance.net" in url:
-                        page.goto(url, wait_until="load", timeout=30000)
-                        time.sleep(3)
+                        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        time.sleep(1.5)
                     else:
                         wait_until = "domcontentloaded" if is_heavy else "networkidle"
                         page.goto(url, wait_until=wait_until, timeout=30000)
@@ -1113,7 +1113,13 @@ class PortfolioBrowser:
             print("🔍 Discovering projects...")
             projects = self.discover_projects(page, platform, candidate_role=candidate_role)
             print(f"✅ Discovered {len(projects)} projects.")
-            page.close()
+            # For Figma design/file: reuse this page for the single snapshot (avoid 2nd load and timeout race)
+            reuse_page = None
+            if platform == "figma" and ("/design/" in url or "/file/" in url) and projects:
+                reuse_page = page
+                print("  📌 Reusing open page for Figma snapshot (single load).")
+            else:
+                page.close()
 
             # Brand Designer: use Gemini to select 3 most relevant projects from all discovered
             if candidate_role and "brand" in candidate_role.lower() and genai_client and projects:
@@ -1145,57 +1151,20 @@ class PortfolioBrowser:
                     project["capture_section_only"] = False
 
             # Snapshot up to 3 projects; if one fails, replace with next from reserve
-            if browser is not None:
-                browser.close()
-                browser = None
-            else:
-                context.close()
-                context = None
-
             queue = list(selected) + list(reserve)
             final_projects = []
             slot = 0
             while len(final_projects) < 3 and queue:
                 project = queue.pop(0)
                 safe_title = "".join([c if c.isalnum() else "_" for c in project["title"]])[:30]
-                snap_browser = None
-                snap_context = None
-                try:
-                    # Each snapshot gets its own independent browser context
-                    snap_use_persistent = use_persistent_context
-                    if snap_use_persistent:
-                        snap_context = p.chromium.launch_persistent_context(
-                            user_data_dir="/home/khyathi/.config/google-chrome",
-                            headless=False,
-                            args=["--no-sandbox"],
-                            viewport={"width": 1440, "height": 900},
-                        )
-                    else:
-                        snap_browser = p.chromium.launch(
-                            headless=True,
-                            args=[
-                                "--no-sandbox",
-                                "--disable-setuid-sandbox",
-                                "--disable-dev-shm-usage",
-                                "--disable-gpu",
-                                "--no-zygote",
-                                "--single-process",
-                            ],
-                        )
-                        snap_context = snap_browser.new_context(viewport={"width": 1440, "height": 900})
-
-                    imgs, text = self.snapshot_project(
-                        snap_context,
-                        project["url"],
-                        f"proj_{slot}_{safe_title}",
-                        capture_section_only=project.get("capture_section_only", False),
-                        candidate_role=candidate_role,
-                    )
-                finally:
-                    if snap_browser is not None:
-                        snap_browser.close()
-                    elif snap_context is not None:
-                        snap_context.close()
+                imgs, text = self.snapshot_project(
+                    context, project["url"], f"proj_{slot}_{safe_title}",
+                    capture_section_only=project.get("capture_section_only", False),
+                    candidate_role=candidate_role,
+                    existing_page=reuse_page
+                )
+                if reuse_page is not None:
+                    reuse_page = None
 
                 if imgs:
                     project["screenshots"] = imgs
@@ -1206,6 +1175,9 @@ class PortfolioBrowser:
                     print(f"  ⚠️ Snapshot failed — trying next candidate from list.")
             projects = final_projects
 
-            # Browser/context already closed before per-snapshot contexts start
+            if browser is not None:
+                browser.close()
+            else:
+                context.close()
             
         return metadata, projects, folder_name

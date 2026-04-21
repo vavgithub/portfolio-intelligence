@@ -47,7 +47,7 @@ def get_model_for_role(candidate_role: str) -> str:
 
 def get_max_workers():
     """Concurrency for Gemini (sequential recommended for free tier)."""
-    return 1
+    return 3
 
 
 def _parse_json_from_response(text: str) -> dict | None:
