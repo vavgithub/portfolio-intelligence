@@ -906,7 +906,7 @@ class PortfolioBrowser:
             is_heavy = any(k in url for k in ["figma.com", "docs.google.com", "drive.google.com"])
             if existing_page is None:
                 if "behance.net" in url:
-                    page.goto(url, wait_until="load", timeout=30000)
+                        page.goto(url, wait_until="networkidle", timeout=60000)
                     time.sleep(3)
                 else:
                     wait_until = "domcontentloaded" if is_heavy else "networkidle"
