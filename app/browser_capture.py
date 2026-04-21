@@ -898,6 +898,7 @@ class PortfolioBrowser:
             print(f"  📸 Snapshotting (reusing open page): {url[:80]}...")
         else:
             page = context.new_page()
+            print(f"  🔍 DEBUG: page created, context alive: {not context._impl_obj._closed}")
             print(f"  📸 Snapshotting: {url}")
         try:
             if "figma.com" in url and ("/proto/" in url or "/deck/" in url) and "hide-ui=1" not in url:
@@ -1027,7 +1028,13 @@ class PortfolioBrowser:
         except Exception as e:
             print(f"  ⚠️ Snapshot failed for {url}: {e}")
         finally:
-            page.close()
+            try:
+                if existing_page is None and page is not None:
+                    print(f"  🔍 DEBUG: about to close page, context alive: {not context._impl_obj._closed}")
+                    page.close()
+                    print(f"  🔍 DEBUG: page closed, context alive: {not context._impl_obj._closed}")
+            except Exception:
+                pass
         return screenshots, case_study_text
 
     def full_pipeline_scan(self, url, run_id="", candidate_role=None, genai_client=None):
