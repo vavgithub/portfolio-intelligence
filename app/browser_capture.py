@@ -1026,7 +1026,11 @@ class PortfolioBrowser:
                         page.screenshot(path=path, full_page=False)
                         screenshots.append(path)
             finally:
-                page.close()
+                try:
+                    if existing_page is None and page is not None:
+                        page.close()
+                except Exception:
+                    pass
 
             return screenshots, case_study_text
         except Exception as e:
