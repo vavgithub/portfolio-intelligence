@@ -1161,14 +1161,23 @@ class PortfolioBrowser:
             while len(final_projects) < 3 and queue:
                 project = queue.pop(0)
                 safe_title = "".join([c if c.isalnum() else "_" for c in project["title"]])[:30]
-                imgs, text = self.snapshot_project(
-                    context, project["url"], f"proj_{slot}_{safe_title}",
-                    capture_section_only=project.get("capture_section_only", False),
-                    candidate_role=candidate_role,
-                    existing_page=reuse_page
-                )
-                if reuse_page is not None:
-                    reuse_page = None
+                with sync_playwright() as p_snap:
+                    snap_browser = p_snap.chromium.launch(
+                        headless=True,
+                        args=['--no-sandbox','--disable-setuid-sandbox',
+                              '--disable-dev-shm-usage','--disable-gpu',
+                              '--no-zygote','--single-process'],
+                    )
+                    snap_context = snap_browser.new_context(viewport={"width": 1440, "height": 900})
+                    try:
+                        imgs, text = self.snapshot_project(
+                            snap_context, project["url"], f"proj_{slot}_{safe_title}",
+                            capture_section_only=project.get("capture_section_only", False),
+                            candidate_role=candidate_role,
+                            existing_page=None
+                        )
+                    finally:
+                        snap_browser.close()
 
                 if imgs:
                     project["screenshots"] = imgs
