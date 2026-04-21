@@ -9,3 +9,4 @@ data/
 *.csv
 service_account.json
 .env.all
+.venv/
