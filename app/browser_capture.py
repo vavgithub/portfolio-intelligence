@@ -1083,7 +1083,7 @@ class PortfolioBrowser:
             
             page = context.new_page()
             # Google Docs/Drive/Figma: use 'load' to avoid long waits; Figma canvas never reaches networkidle
-            wait_condition = "load" if platform in ("google_docs", "google_drive", "figma") else "networkidle"
+            wait_condition = "load" if platform in ("google_docs", "google_drive", "figma", "behance") else "networkidle"
             page.goto(load_url, wait_until=wait_condition, timeout=60000)
             
             if platform == "google_docs":
