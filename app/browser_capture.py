@@ -4,7 +4,7 @@ import re
 from urllib.parse import urlparse, urljoin, unquote, parse_qs, urlencode, urlunparse
 from playwright.sync_api import sync_playwright
 
-from vertexai.generative_models import Part as genai_types_Part
+from google.genai import types as genai_types
 
 
 def _figma_design_url_to_embed_50(url: str) -> str:
@@ -118,8 +118,11 @@ Reply with exactly one line: only three numbers separated by commas. Example: 2,
 Do not include any other text, explanation, or punctuation."""
 
     try:
-        contents = [genai_types_Part.from_text(prompt)]
-        response = genai_client.generate_content(contents=contents)
+        contents = [genai_types.Part.from_text(text=prompt)]
+        response = genai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+        )
         text = (response.text or "").strip()
         # Parse 1-based numbers (e.g. "2, 5, 7" or "2,5,7" or "2. 5. 7")
         numbers = re.findall(r"\d+", text)
@@ -330,42 +333,54 @@ class PortfolioBrowser:
         seen_urls = set()
         
         if platform == "behance":
-            # Behance lazy-loads projects; scroll down to trigger loading
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(2)
+            # Scroll multiple times to trigger lazy loading
+            for _ in range(5):
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(1.5)
             
-            # Scope to main profile grid to avoid 'Similar Projects'
-            grid = page.query_selector(".Profile-root, [class*='Profile-grid'], #profile-projects")
-            container = grid if grid else page
+            # Wait for any project links to appear
+            try:
+                page.wait_for_selector('a[href*="/gallery/"]', timeout=10000)
+            except Exception:
+                pass
+
+            # Grab all gallery links directly — works with current Behance HTML
+            cards = page.query_selector_all('a[href*="/gallery/"]')
             
-            # Use attribute-based selector to catch dynamic class names
-            cards = container.query_selector_all('a[class*="ProjectCoverNeue-coverLink"]')
-            if not cards:
-                cards = container.query_selector_all("a.rf-project-cover__link") # Fallback
-            
-            for card in cards[:8]:
+            for card in cards:
                 href = card.get_attribute("href")
-                if not href: continue
+                if not href or "/gallery/" not in href:
+                    continue
                 full_url = href if href.startswith("http") else f"https://www.behance.net{href}"
+                clean_url = full_url.split("?")[0].rstrip("/")
                 
-                # Cleanup URL (remove query params for deduplication)
-                clean_url = full_url.split('?')[0].rstrip('/')
-                if clean_url in seen_urls: continue
-                
-                # Prefer real project name: ARIA, then common Behance title class, then URL slug
+                # Skip non-project gallery links (category pages etc)
+                parts = clean_url.split("/gallery/")
+                if len(parts) < 2:
+                    continue
+                # Must have numeric ID after /gallery/
+                gallery_id = parts[1].split("/")[0]
+                if not gallery_id.isdigit():
+                    continue
+                    
+                if clean_url in seen_urls:
+                    continue
+                    
+                # Get title from aria-label, inner text, or URL slug
                 title = (card.get_attribute("aria-label") or "").strip()
-                if not title or "Untitled" in title or title == "Visual Project":
-                    for sel in ["[class*='ProjectCoverNeue-title']", "[class*='ProjectCover-title']", "h2", "[class*='title']"]:
-                        title_el = card.query_selector(sel)
-                        if title_el:
-                            t = title_el.inner_text().strip()
-                            if t and len(t) > 1:
-                                title = t
-                                break
-                if not title or title == "Visual Project":
+                if not title:
+                    try:
+                        title = card.inner_text().strip().split("\n")[0]
+                    except Exception:
+                        title = ""
+                if not title or len(title) < 2:
                     title = _title_from_behance_url(full_url) or "Visual Project"
+                    
                 projects.append({"url": full_url, "title": title})
                 seen_urls.add(clean_url)
+                
+                if len(projects) >= 8:
+                    break
                 
         elif platform == "dribbble":
             shots = page.query_selector_all("a.shot-thumbnail-link")
@@ -890,10 +905,14 @@ class PortfolioBrowser:
             # Use lighter wait for URLs that never reach networkidle (Figma, Google Docs, Drive)
             is_heavy = any(k in url for k in ["figma.com", "docs.google.com", "drive.google.com"])
             if existing_page is None:
-                wait_until = "domcontentloaded" if is_heavy else "networkidle"
-                page.goto(url, wait_until=wait_until, timeout=60000)
-                if is_heavy:
-                    time.sleep(3)  # Give canvas-based apps time to render
+                if "behance.net" in url:
+                    page.goto(url, wait_until="load", timeout=30000)
+                    time.sleep(3)
+                else:
+                    wait_until = "domcontentloaded" if is_heavy else "networkidle"
+                    page.goto(url, wait_until=wait_until, timeout=60000)
+                    if is_heavy:
+                        time.sleep(3)  # Give canvas-based apps time to render
             elif is_heavy:
                 time.sleep(1)  # Page already open; brief settle
 

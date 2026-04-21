@@ -3,10 +3,10 @@ import json
 import os
 import re
 import tempfile
-from dotenv import load_dotenv
 
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part, GenerationConfig
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
@@ -23,15 +23,22 @@ AI_MODEL_NAME = "gemini-2.5-flash"
 
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "").strip()
 GCP_REGION = os.getenv("GCP_REGION", "us-central1").strip()
+
 _creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", "").strip()
 if _creds_json:
     _creds_dict = json.loads(_creds_json)
     _tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
     json.dump(_creds_dict, _tmp)
     _tmp.flush()
+    _tmp.close()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = _tmp.name
-vertexai.init(project=GCP_PROJECT_ID, location=GCP_REGION)
-genai_client = GenerativeModel("gemini-2.5-flash-preview-0514")
+
+genai_client = genai.Client(
+    vertexai=True,
+    project=GCP_PROJECT_ID,
+    location=GCP_REGION,
+)
+print(f"✅ Vertex AI client initialized for project {GCP_PROJECT_ID}")
 
 
 def get_model_for_role(candidate_role: str) -> str:
@@ -260,17 +267,23 @@ def analyze_portfolio_visuals(screenshot_paths, project_title, case_study_text="
         prompt = BRAND_IDENTITY_EXPERT_FRAMEWORK.strip() + "\n\n" + prompt
 
     target_screenshots = screenshot_paths[:6]
-    parts = [Part.from_text(prompt)]
+    parts = [types.Part.from_text(text=prompt)]
     for path in target_screenshots:
         b64 = encode_image(path)
         if b64:
-            parts.append(Part.from_data(data=base64.b64decode(b64), mime_type="image/jpeg"))
+            parts.append(
+                types.Part.from_bytes(
+                    data=base64.b64decode(b64),
+                    mime_type="image/jpeg",
+                )
+            )
 
     print(f"🤖 Using model: {model_name}")
     try:
-        response = genai_client.generate_content(
+        response = genai_client.models.generate_content(
+            model=AI_MODEL_NAME,
             contents=parts,
-            generation_config=GenerationConfig(temperature=0),
+            config=types.GenerateContentConfig(temperature=0),
         )
         text = response.text
         if not text:
