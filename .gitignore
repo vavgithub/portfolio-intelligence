@@ -10,3 +10,5 @@ data/
 service_account.json
 .env.all
 .venv/
+__pycache__/
+*.pyc
