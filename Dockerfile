@@ -30,6 +30,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Env vars with safe defaults — override all of these in Cloud Run console
+ENV SNAPSHOTS_DIR=/tmp/snapshots \
+    GEMINI_MAX_PARALLEL=1 \
+    MAX_PROJECTS_TO_ANALYZE=3 \
+    CORS_ORIGINS=http://localhost:5173
+
 # Install Playwright browsers
 RUN playwright install chromium
 RUN playwright install-deps chromium
@@ -41,4 +47,4 @@ RUN rm -f .env
 
 EXPOSE 8080
 
-CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD uvicorn main_api:app --host 0.0.0.0 --port ${PORT:-8080}

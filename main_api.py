@@ -10,6 +10,9 @@ Run from project root using the project venv (not system /usr/bin/uvicorn):
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+from enum import Enum
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +22,20 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.main import run_portfolio_intelligence_pipeline
 
-# Global dict to store results
+
+class JobStatus(str, Enum):
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+logger = logging.getLogger(__name__)
+
+MAX_INSTANCES = int(os.getenv("MAX_INSTANCES", "1"))
+MAX_PROJECTS_TO_ANALYZE = max(1, int(os.getenv("MAX_PROJECTS_TO_ANALYZE", "3")))
+
+# Single-process only. Safe while MAX_INSTANCES=1. Replace with Redis when scaling.
 results_store = {}
 
 app = FastAPI()
@@ -81,47 +97,97 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _run_pipeline_sync(behance_url: str, role: str) -> dict | None:
+def _run_pipeline_sync(
+    behance_url: str, role: str, job_id: str, max_projects: int
+) -> dict:
+    """Always returns a dict: {ok: bool, error?: str, result?: dict} for store payload."""
+    logger.info(
+        "pipeline_start",
+        extra={"job_id": job_id, "url": behance_url, "role": role},
+    )
     try:
-        report = run_portfolio_intelligence_pipeline(behance_url, role)
-    except Exception:
-        return None
+        report = run_portfolio_intelligence_pipeline(
+            behance_url,
+            candidate_role=role,
+            max_projects=max_projects,
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
     fc = report.get("final_scorecard") or {}
-    skipped = report.get("status") == "skipped"
-    result = {
+    skipped = report.get("status") == JobStatus.SKIPPED
+    payload = {
         "score": fc.get("average_quality_score"),
         "recommendation": str(fc.get("hire_recommendation", "")),
         "reasoning": str(fc.get("summary_reasoning", "")),
-        "seniority": str(fc.get("seniority_estimate", "")),
     }
     if skipped:
-        return None
-    return result
-
-
-async def _background_score(candidate_id: str, behance_url: str, role: str) -> None:
-    result = await asyncio.to_thread(_run_pipeline_sync, behance_url, role)
-    if result is not None:
-        results_store[candidate_id] = {
-            "status": "completed",
-            "score": result.get("score"),
-            "reasoning": result.get("reasoning"),
-            "recommendation": result.get("recommendation"),
+        return {
+            "ok": True,
+            "result": {
+                "status": JobStatus.SKIPPED,
+                **payload,
+            },
         }
+    return {
+        "ok": True,
+        "result": {
+            "status": JobStatus.COMPLETED,
+            **payload,
+        },
+    }
+
+
+async def _background_score(
+    candidate_id: str,
+    behance_url: str,
+    role: str,
+    max_projects: int,
+) -> None:
+    job_id = candidate_id
+    outcome = await asyncio.to_thread(
+        _run_pipeline_sync,
+        behance_url,
+        role,
+        job_id,
+        max_projects,
+    )
+    if outcome.get("ok") is False:
+        err = str(outcome.get("error", "unknown"))
+        results_store[candidate_id] = {
+            "status": JobStatus.FAILED,
+            "error": err,
+            "job_id": job_id,
+        }
+        logger.error(
+            "job_failed",
+            extra={
+                "job_id": job_id,
+                "candidate_id": candidate_id,
+                "error": err,
+            },
+        )
+    else:
+        results_store[candidate_id] = outcome.get("result") or outcome
 
 
 @app.post("/score")
 async def score(request: ScoreRequest) -> dict:
     results_store.pop(request.candidate_id, None)
     asyncio.create_task(
-        _background_score(request.candidate_id, request.behance_url, request.role)
+        _background_score(
+            request.candidate_id,
+            request.behance_url,
+            request.role,
+            MAX_PROJECTS_TO_ANALYZE,
+        )
     )
-    return {"status": "processing", "candidate_id": request.candidate_id}
+    return {"status": JobStatus.PROCESSING, "candidate_id": request.candidate_id}
 
 
 @app.get("/score-status/{candidate_id}")
 async def score_status(candidate_id: str) -> dict:
     if candidate_id in results_store:
         return results_store[candidate_id]
-    return {"status": "processing", "candidate_id": candidate_id}
+    # Lookup miss — not a job lifecycle state (see JobStatus).
+    return {"status": "not_found", "candidate_id": candidate_id}

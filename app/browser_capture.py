@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import re
@@ -5,6 +6,10 @@ from urllib.parse import urlparse, urljoin, unquote, parse_qs, urlencode, urlunp
 from playwright.sync_api import sync_playwright
 
 from google.genai import types as genai_types
+
+# Single-process safe. FIGMA_USE_LOCAL_CHROME=1 for local dev only, never on Cloud Run.
+
+logger = logging.getLogger(__name__)
 
 
 def _figma_design_url_to_embed_50(url: str) -> str:
@@ -1125,8 +1130,10 @@ class PortfolioBrowser:
                 selected = select_brand_projects_with_ai(projects, candidate_role, genai_client)
                 reserve = [p for p in projects if p not in selected]
                 role_filter_note = None
+                selection_mode = "ai_brand"
             else:
                 selected, role_filter_note, reserve = _filter_projects_for_role(projects, candidate_role)
+                selection_mode = "role_filter"
             if role_filter_note:
                 metadata["role_filter_note"] = role_filter_note
                 print(f"  ⚠️ {role_filter_note} — using top 3 projects overall.")
@@ -1153,14 +1160,31 @@ class PortfolioBrowser:
             queue = list(selected) + list(reserve)
             final_projects = []
             slot = 0
+            logger.info(
+                "snapshot_loop_start",
+                extra={
+                    "selected_count": len(selected),
+                    "reserve_count": len(reserve),
+                    "selection_mode": selection_mode,
+                },
+            )
             while len(final_projects) < 3 and queue:
                 project = queue.pop(0)
                 safe_title = "".join([c if c.isalnum() else "_" for c in project["title"]])[:30]
+                t_proj = time.perf_counter()
                 imgs, text = self.snapshot_project(
                     context, project["url"], f"proj_{slot}_{safe_title}",
                     capture_section_only=project.get("capture_section_only", False),
                     candidate_role=candidate_role,
                     existing_page=reuse_page
+                )
+                logger.info(
+                    "project_snapshot_done",
+                    extra={
+                        "project": project.get("title", "")[:60],
+                        "shots": len(imgs),
+                        "elapsed_s": round(time.perf_counter() - t_proj, 2),
+                    },
                 )
                 if reuse_page is not None:
                     reuse_page = None

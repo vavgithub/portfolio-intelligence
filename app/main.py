@@ -1,8 +1,8 @@
 import json
+import logging
 import os
 import sys
 import time
-from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from app.browser_capture import PortfolioBrowser
@@ -11,6 +11,10 @@ from app.scoring import aggregate_scores
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+MAX_PROJECTS_TO_ANALYZE = max(1, int(os.getenv("MAX_PROJECTS_TO_ANALYZE", "3")))
 
 def analyze_single_project(project, design_specs=None, candidate_role=None):
     """Worker for parallel analysis."""
@@ -29,7 +33,7 @@ def analyze_single_project(project, design_specs=None, candidate_role=None):
         print(f"  ✅ AI Score for {project['title']}: {analysis.get('score', 'N/A')}")
     return analysis
 
-def run_portfolio_intelligence_pipeline(url, candidate_role=None):
+def run_portfolio_intelligence_pipeline(url, candidate_role=None, max_projects: int = 3):
     print(f"🌟 Starting Portfolio Intelligence Pipeline for: {url}")
     
     # Generate unique run ID (suffix)
@@ -64,9 +68,20 @@ def run_portfolio_intelligence_pipeline(url, candidate_role=None):
             "skip_reason": metadata.get("skip_reason", ""),
         }
     
+    if len(projects) > max_projects:
+        logger.info(
+            "projects_capped",
+            extra={"original": len(projects), "capped": max_projects},
+        )
+        projects = projects[:max_projects]
+
     # Stage 4: Parallel Vision AI Analysis
     max_workers = get_max_workers()
     print(f"🤖 Processing projects through AI (Parallel, {max_workers} workers)...")
+    logger.info(
+        "processing_projects",
+        extra={"count": len(projects), "max_workers": max_workers},
+    )
     
     # Use partial to pass global design specs and candidate role to all project workers
     worker_fn = partial(analyze_single_project, design_specs=metadata.get("design_specs"), candidate_role=candidate_role)
@@ -86,6 +101,17 @@ def run_portfolio_intelligence_pipeline(url, candidate_role=None):
     print(f"🎯 Recommendation: {final_scorecard.get('hire_recommendation', 'N/A')}")
     print(f"📝 Summary: {final_scorecard.get('summary_reasoning', 'N/A')}")
     print("✨" * 21 + "\n")
+
+    logger.info(
+        "pipeline_summary",
+        extra={
+            "name": metadata.get("name", "N/A"),
+            "quality_score": final_scorecard.get("average_quality_score", 0),
+            "recommendation": final_scorecard.get("hire_recommendation", "N/A"),
+            "seniority": final_scorecard.get("seniority_estimate", "N/A"),
+            "max_projects": max_projects,
+        },
+    )
     
     return {
         "model_used": AI_MODEL_NAME,
@@ -99,7 +125,11 @@ if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "https://www.behance.net/live"
     candidate_role = (sys.argv[2].strip() or None) if len(sys.argv) > 2 else None
     try:
-        final_report = run_portfolio_intelligence_pipeline(target, candidate_role=candidate_role)
+        final_report = run_portfolio_intelligence_pipeline(
+            target,
+            candidate_role=candidate_role,
+            max_projects=MAX_PROJECTS_TO_ANALYZE,
+        )
         output_file = f"report_{final_report['run_id']}.json"
         with open(output_file, "w") as f:
             json.dump(final_report, f, indent=4)
