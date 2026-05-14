@@ -911,8 +911,8 @@ class PortfolioBrowser:
             is_heavy = any(k in url for k in ["figma.com", "docs.google.com", "drive.google.com"])
             if existing_page is None:
                 if "behance.net" in url:
-                    page.goto(url, wait_until="networkidle", timeout=60000)
-                    time.sleep(3)
+                    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                    time.sleep(2)
                 else:
                     wait_until = "domcontentloaded" if is_heavy else "networkidle"
                     page.goto(url, wait_until=wait_until, timeout=60000)
@@ -1028,7 +1028,24 @@ class PortfolioBrowser:
                     screenshots.append(path)
 
         except Exception as e:
-            print(f"  ⚠️ Snapshot failed for {url}: {e}")
+            # Forensic capture — tells us if it's a block/CAPTCHA vs genuine timeout
+            try:
+                failure_path = os.path.join(self.current_snapshots_dir, f"{filename_prefix}_FAILURE.png")
+                page.screenshot(path=failure_path, full_page=False)
+                current_url = page.url
+                page_title = page.title()
+                logger.error(
+                    "snapshot_failed",
+                    extra={
+                        "url": url[:80],
+                        "current_url": current_url,
+                        "page_title": page_title,
+                        "failure_screenshot": failure_path,
+                        "error": str(e),
+                    },
+                )
+            except Exception:
+                logger.exception("snapshot_failed", extra={"url": url[:80], "error": str(e)})
         finally:
             try:
                 if existing_page is None and page is not None:
@@ -1081,7 +1098,7 @@ class PortfolioBrowser:
             
             page = context.new_page()
             # Google Docs/Drive/Figma: use 'load' to avoid long waits; Figma canvas never reaches networkidle
-            wait_condition = "load" if platform in ("google_docs", "google_drive", "figma", "behance") else "networkidle"
+            wait_condition = "domcontentloaded" if platform in ("google_docs", "google_drive", "figma", "behance") else "networkidle"
             page.goto(load_url, wait_until=wait_condition, timeout=60000)
             
             if platform == "google_docs":
