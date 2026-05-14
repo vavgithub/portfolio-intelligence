@@ -911,7 +911,7 @@ class PortfolioBrowser:
             is_heavy = any(k in url for k in ["figma.com", "docs.google.com", "drive.google.com"])
             if existing_page is None:
                 if "behance.net" in url:
-                    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                    page.goto(url, wait_until="domcontentloaded", timeout=120000)
                     time.sleep(2)
                 else:
                     wait_until = "domcontentloaded" if is_heavy else "networkidle"
@@ -1011,7 +1011,7 @@ class PortfolioBrowser:
                     page.evaluate(f"window.scrollTo(0, {scroll_y})")
                     if not is_heavy:
                         try:
-                            page.wait_for_load_state("networkidle", timeout=2000)
+                            page.wait_for_load_state("networkidle", timeout=3000)
                         except Exception:
                             pass
                     page.evaluate(f"""() => {{
@@ -1097,9 +1097,8 @@ class PortfolioBrowser:
                 context = browser.new_context(viewport={"width": 1440, "height": 900})
             
             page = context.new_page()
-            # Google Docs/Drive/Figma: use 'load' to avoid long waits; Figma canvas never reaches networkidle
-            wait_condition = "domcontentloaded" if platform in ("google_docs", "google_drive", "figma", "behance") else "networkidle"
-            page.goto(load_url, wait_until=wait_condition, timeout=60000)
+            # Initial load: domcontentloaded + 120s cap (Behance and heavy SPAs rarely satisfy networkidle here).
+            page.goto(load_url, wait_until="domcontentloaded", timeout=120000)
             
             if platform == "google_docs":
                 time.sleep(5)
