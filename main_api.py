@@ -116,10 +116,43 @@ def _run_pipeline_sync(
 
     fc = report.get("final_scorecard") or {}
     skipped = report.get("status") == JobStatus.SKIPPED
+
+    # Per-project confidence from standouts
+    standouts = fc.get("top_standout_projects") or []
+    scored = [p for p in standouts if not p.get("error")]
+    projects_scored = len(scored)
+
+    confidence_rank = {"high": 3, "medium": 2, "low": 1}
+
+    # Signal 1 — data completeness
+    if projects_scored >= 3:
+        data_confidence = "high"
+    elif projects_scored == 2:
+        data_confidence = "medium"
+    else:
+        data_confidence = "low"
+
+    # Signal 2 — Gemini's own certainty (minimum across projects)
+    if scored:
+        gemini_confidence = min(
+            scored,
+            key=lambda p: confidence_rank.get(p.get("confidence", "low"), 1),
+        ).get("confidence", "low")
+    else:
+        gemini_confidence = "low"
+
+    # Final — take the worse of the two signals
+    final_confidence = min(
+        [data_confidence, gemini_confidence],
+        key=lambda c: confidence_rank.get(c, 1),
+    )
+
     payload = {
         "score": fc.get("average_quality_score"),
         "recommendation": str(fc.get("hire_recommendation", "")),
         "reasoning": str(fc.get("summary_reasoning", "")),
+        "confidence": final_confidence,
+        "projects_scored": projects_scored,
     }
     if skipped:
         return {
