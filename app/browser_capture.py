@@ -7,6 +7,8 @@ from playwright.sync_api import sync_playwright
 
 from google.genai import types as genai_types
 
+from app.content_sufficiency import assess_capture_quality, detect_behance_wall
+
 # Single-process safe. FIGMA_USE_LOCAL_CHROME=1 for local dev only, never on Cloud Run.
 
 logger = logging.getLogger(__name__)
@@ -40,38 +42,115 @@ def _title_from_behance_url(url: str) -> str:
     title = unquote(slug).replace("-", " ").replace("_", " ")
     return title.strip() or ""
 
-# Role → categories we keep for project filtering (lightweight title-based classification)
-# Brand Designer includes Graphic and Illustration as fallback (many brand designers tag work that way on Behance)
-ROLE_TO_CATEGORIES = {
-    "ui ux": {"UI UX"},
-    "ui/ux": {"UI UX"},
-    "brand designer": {"Brand Identity", "Graphic", "Illustration"},
-    "brand design": {"Brand Identity", "Graphic", "Illustration"},
-    "motion designer": {"Motion"},
-    "motion design": {"Motion"},
-    "graphic designer": {"Graphic"},
-    "graphic design": {"Graphic"},
-}
+
+_BEHANCE_RESERVED_PATHS = None  # loaded from config
+_BEHANCE_PORTFOLIO_CONTAINER_TITLES = None
+_BEHANCE_PORTFOLIO_CONTAINER_SLUGS = None
+
+
+def _behance_cfg() -> dict:
+    from app.settings import get_settings
+
+    return get_settings().get("behance") or {}
+
+
+def _reserved_paths() -> frozenset[str]:
+    global _BEHANCE_RESERVED_PATHS
+    if _BEHANCE_RESERVED_PATHS is None:
+        _BEHANCE_RESERVED_PATHS = frozenset(_behance_cfg().get("reserved_paths") or [])
+    return _BEHANCE_RESERVED_PATHS
+
+
+def _portfolio_container_titles() -> frozenset[str]:
+    global _BEHANCE_PORTFOLIO_CONTAINER_TITLES
+    if _BEHANCE_PORTFOLIO_CONTAINER_TITLES is None:
+        _BEHANCE_PORTFOLIO_CONTAINER_TITLES = frozenset(
+            _behance_cfg().get("portfolio_container_titles") or []
+        )
+    return _BEHANCE_PORTFOLIO_CONTAINER_TITLES
+
+
+def _portfolio_container_slugs() -> frozenset[str]:
+    global _BEHANCE_PORTFOLIO_CONTAINER_SLUGS
+    if _BEHANCE_PORTFOLIO_CONTAINER_SLUGS is None:
+        _BEHANCE_PORTFOLIO_CONTAINER_SLUGS = frozenset(
+            _behance_cfg().get("portfolio_container_slugs") or []
+        )
+    return _BEHANCE_PORTFOLIO_CONTAINER_SLUGS
+
+
+def _behance_gallery_slug(url: str) -> str:
+    if not url:
+        return ""
+    m = re.search(r"/gallery/\d+/([^/?]+)", url, flags=re.IGNORECASE)
+    if not m:
+        return ""
+    return unquote(m.group(1)).strip().lower().replace("_", "-")
+
+
+def _is_behance_portfolio_container(url: str, title: str = "") -> bool:
+    """
+    True for Behance gallery pages that are profile/hub containers (e.g. slug 'Portfolio'),
+    not standalone case-study projects.
+    """
+    slug = _behance_gallery_slug(url)
+    if slug in _portfolio_container_slugs():
+        return True
+    if re.fullmatch(r"portfolio(?:-\d{4})?", slug):
+        return True
+    title_norm = re.sub(r"\s+", " ", (title or "").strip().lower())
+    if title_norm in _portfolio_container_titles():
+        return True
+    return False
+
+
+def _behance_profile_url_from_page(page) -> str | None:
+    """Resolve a Behance user profile URL from the current page (gallery or profile)."""
+    reserved = _reserved_paths()
+    current = (page.url or "").split("?")[0].rstrip("/")
+    if "behance.net" in current and "/gallery/" not in current:
+        m = re.match(r"https?://(?:www\.)?behance\.net/([A-Za-z0-9_-]+)$", current)
+        if m and m.group(1).lower() not in reserved:
+            return current
+
+    seen: set[str] = set()
+    for el in page.query_selector_all('a[href*="behance.net"]'):
+        href = (el.get_attribute("href") or "").split("?")[0].rstrip("/")
+        m = re.match(r"https?://(?:www\.)?behance\.net/([A-Za-z0-9_-]+)$", href)
+        if not m:
+            continue
+        user = m.group(1)
+        if user.lower() in reserved:
+            continue
+        profile = f"https://www.behance.net/{user}"
+        if profile not in seen:
+            seen.add(profile)
+            return profile
+    return None
+
+
+def _role_to_categories() -> dict[str, set[str]]:
+    from app.settings import get_settings
+
+    raw = get_settings().get("role_to_categories") or {}
+    return {k: set(v) for k, v in raw.items()}
 
 
 def _classify_project_from_title_and_url(title: str, url: str) -> str:
-    """Lightweight classification: UI UX, Brand Identity, Motion, Graphic, or Other. Uses title + URL keywords."""
+    """Lightweight classification from title + URL keywords (order from config)."""
+    from app.keyword_match import any_keyword_matches
+    from app.settings import get_settings
+
     if not title:
         title = ""
     if not url:
         url = ""
-    combined = f" {title.lower()} {url.lower()} "
-
-    if any(k in combined for k in ("showreel", "reel", "motion", "animation", "after effects", "motion graphic", "kinetic")):
-        return "Motion"
-    if any(k in combined for k in ("brand", "logo", "identity", "visual identity", "branding")):
-        return "Brand Identity"
-    if any(k in combined for k in ("ui", "ux", "app ", "interface", "figma", "wireframe", "user flow", "case study")):
-        return "UI UX"
-    if any(k in combined for k in ("graphic", "poster", "print", "editorial", "typography", "layout")):
-        return "Graphic"
-    if any(k in combined for k in ("illustration", "digital painting", "character design", "drawing", "artwork", "campaign")):
-        return "Illustration"
+    combined = f"{title} {url}"
+    rules = get_settings().get("project_classification") or []
+    for rule in rules:
+        keywords = rule.get("keywords") or []
+        if any_keyword_matches(combined, keywords):
+            return rule.get("category") or "Other"
     return "Other"
 
 
@@ -80,24 +159,16 @@ def select_brand_projects_with_ai(projects, candidate_role, genai_client):
     if not projects or "brand" not in (candidate_role or "").lower() or not genai_client:
         return projects[:3] if projects else []
 
-    # Hard bias before AI: prioritize clearly brand-identity projects and avoid pure UI/UX titles.
-    positive_kw = (
-        "brand", "branding", "identity", "logo", "visual identity", "packaging",
-        "typography", "guideline", "guidelines", "campaign", "naming"
-    )
-    negative_kw = (
-        "ui", "ux", "case study", "wireframe", "user flow", "dashboard",
-        "app design", "website ui", "mobile app", "saas"
-    )
+    from app.keyword_match import keyword_hit_score
+    from app.settings import get_settings
+
+    sel = get_settings().get("brand_project_selection") or {}
+    positive_kw = tuple(sel.get("positive_keywords") or [])
+    negative_kw = tuple(sel.get("negative_keywords") or [])
 
     def brand_relevance(p):
-        t = (p.get("title") or "").lower()
-        u = (p.get("url") or "").lower()
-        text = f"{t} {u}"
-        pos = sum(2 for k in positive_kw if k in text)
-        neg = sum(2 for k in negative_kw if k in text)
-        # Keep some flexibility for mixed profiles but heavily penalize obvious UI/UX.
-        return pos - neg
+        text = f"{p.get('title') or ''} {p.get('url') or ''}"
+        return keyword_hit_score(text, positive_kw) - keyword_hit_score(text, negative_kw)
 
     ranked = sorted(projects, key=brand_relevance, reverse=True)
     narrowed = [p for p in ranked if brand_relevance(p) > 0]
@@ -125,8 +196,11 @@ Do not include any other text, explanation, or punctuation."""
     try:
         contents = [genai_types.Part.from_text(text=prompt)]
         response = genai_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=__import__("app.settings", fromlist=["get_settings"]).get_settings().get(
+                "model_name", "gemini-2.5-flash"
+            ),
             contents=contents,
+            config=genai_types.GenerateContentConfig(temperature=0, seed=0),
         )
         text = (response.text or "").strip()
         # Parse 1-based numbers (e.g. "2, 5, 7" or "2,5,7" or "2. 5. 7")
@@ -177,7 +251,7 @@ def _filter_projects_for_role(projects: list, candidate_role: str | None):
 
     role_lower = candidate_role.strip().lower()
     keep_categories = None
-    for key, cats in ROLE_TO_CATEGORIES.items():
+    for key, cats in _role_to_categories().items():
         if key in role_lower or role_lower in key:
             keep_categories = cats
             break
@@ -330,9 +404,26 @@ class PortfolioBrowser:
 
     def discover_projects(self, page, platform, candidate_role=None):
         url = page.url or ""
-        if "behance.net" in url and "/gallery/" in url:
+        if platform == "behance" and "behance.net" in url and "/gallery/" in url:
             title = _title_from_behance_url(url) or url.split("/")[-1].replace("-", " ").replace("_", " ").title() or "Project"
-            return [{"url": url, "title": title}]
+            if _is_behance_portfolio_container(url, title):
+                profile_url = _behance_profile_url_from_page(page)
+                if profile_url:
+                    print(
+                        f"  ↪ Portfolio hub page detected ({url[:80]}) — "
+                        f"discovering projects from profile: {profile_url}"
+                    )
+                    page.goto(profile_url, wait_until="domcontentloaded", timeout=120000)
+                    time.sleep(2)
+                    url = page.url or profile_url
+                else:
+                    print(
+                        f"  ⚠️ Portfolio hub page detected but profile URL not found — "
+                        f"skipping hub container as a project"
+                    )
+                    return []
+            else:
+                return [{"url": url.split("?")[0].rstrip("/"), "title": title}]
 
         projects = []
         seen_urls = set()
@@ -380,7 +471,10 @@ class PortfolioBrowser:
                         title = ""
                 if not title or len(title) < 2:
                     title = _title_from_behance_url(full_url) or "Visual Project"
-                    
+
+                if _is_behance_portfolio_container(clean_url, title):
+                    continue
+
                 projects.append({"url": full_url, "title": title})
                 seen_urls.add(clean_url)
                 
@@ -565,6 +659,8 @@ class PortfolioBrowser:
             ui_ux_keywords = ("ui", "ux", "case study", "app", "web design", "website", "digital", "product design", "interface")
             link_items = []
             if section_links:
+                from app.keyword_match import any_keyword_matches
+
                 for item in section_links:
                     href = (item or {}).get("href") or ""
                     content = ((item or {}).get("text") or "").strip()
@@ -584,14 +680,14 @@ class PortfolioBrowser:
                     content_lower = (content or "").lower().strip()
                     if content_lower in {"about", "about me", "contact", "home", "services", "resume", "hire me", "get in touch", "my canvas"} and len(segments) <= 1:
                         continue
-                    if content and any(k in content_lower for k in ["download resume", "contact now", "email me", "menu", "let's work together", "about me", "about us"]):
+                    if content and any_keyword_matches(content_lower, ["download resume", "contact now", "email me", "menu", "let's work together", "about me", "about us"]):
                         continue
                     if content_lower.startswith("about ") or content_lower == "about" or content_lower == "my canvas":
                         continue
                     # Links from Featured Cases section are trusted as projects; only skip obvious nav
                     path_lower = path.lower()
                     title = content if len(content) > 2 else path.split("/")[-1].replace("-", " ").title()
-                    is_ui_ux = any(k in (title + " " + path_lower).lower() for k in ui_ux_keywords)
+                    is_ui_ux = any_keyword_matches(f"{title} {path_lower}", ui_ux_keywords)
                     link_items.append({"url": full_url, "title": title, "is_ui_ux": is_ui_ux})
             if link_items:
                 # Dedupe by URL, prefer UI/UX when candidate_role is UI UX
@@ -631,11 +727,19 @@ class PortfolioBrowser:
                         continue
                     if content_lower.startswith("about ") or content_lower == "about" or content_lower == "my canvas":
                         continue
+                    from app.keyword_match import any_keyword_matches as _akm
+
                     path_lower = path.lower()
-                    is_project_path = any(k in path_lower for k in ["work", "project", "case", "portfolio", "design", "app", "ui", "ux", "brand"])
+                    is_project_path = _akm(
+                        path_lower.replace("/", " ").replace("-", " ").replace("_", " "),
+                        ["work", "project", "case", "portfolio", "design", "app", "ui", "ux", "brand", "branding"],
+                    )
                     has_image = link.query_selector("img") and not (link.query_selector("img[class*='logo']") or link.query_selector("img[src*='logo']"))
                     long_descriptive = len(content) > 20 and not any(k in content.lower() for k in ["copyright", "rights reserved", "terms", "privacy"])
-                    content_looks_project = content and any(k in content.lower() for k in ["case study", "ui/ux", "brand", "identity", "e-commerce", "web design", "pitch deck", "animation"])
+                    content_looks_project = content and _akm(
+                        content.lower(),
+                        ["case study", "ui/ux", "brand", "identity", "e-commerce", "web design", "pitch deck", "animation"],
+                    )
                     multi_segment = len(segments) >= 2
                     single_slug_project = len(segments) == 1 and (has_image or len(content or "") > 15 or content_looks_project)
                     if not (is_project_path or has_image or long_descriptive or multi_segment or single_slug_project):
@@ -898,6 +1002,8 @@ class PortfolioBrowser:
     def snapshot_project(self, context, url, filename_prefix, capture_section_only=False, candidate_role=None, existing_page=None):
         screenshots = []
         case_study_text = ""
+        used_fallback_selector = False
+        behance_wall_marker = None
         if existing_page is not None:
             page = existing_page
             print(f"  📸 Snapshotting (reusing open page): {url[:80]}...")
@@ -976,7 +1082,10 @@ class PortfolioBrowser:
                         print(f"  📌 Capturing from FEATURED CASES only (scroll {section_top}–{section_top + section_height}px)")
 
                 # Extract text for OCR/Context (from full page or section)
-                main_content = page.query_selector("main, article, .project-canvas, #project-content, #main-content")
+                main_content = page.query_selector(
+                    "main, article, .project-canvas, #project-content, #main-content"
+                )
+                used_fallback_selector = main_content is None
                 if main_content:
                     case_study_text = main_content.inner_text().strip()
                 else:
@@ -1027,6 +1136,27 @@ class PortfolioBrowser:
                     page.screenshot(path=path, full_page=False)
                     screenshots.append(path)
 
+            if "behance.net" in url:
+                _walled, behance_wall_marker = detect_behance_wall(page)
+
+            sufficient, sufficiency_reasons = assess_capture_quality(
+                screenshots,
+                case_study_text,
+                page=page,
+                used_fallback_selector=used_fallback_selector,
+                page_url=url,
+                behance_wall_marker=behance_wall_marker,
+            )
+            if not sufficient:
+                logger.warning(
+                    "capture_insufficient",
+                    extra={"url": url[:80], "reasons": sufficiency_reasons},
+                )
+                print(
+                    f"  ⚠️ Capture insufficient ({'; '.join(sufficiency_reasons)}) — treating as failed."
+                )
+                screenshots = []
+
         except Exception as e:
             # Forensic capture — tells us if it's a block/CAPTCHA vs genuine timeout
             try:
@@ -1052,7 +1182,12 @@ class PortfolioBrowser:
                     page.close()
             except Exception:
                 pass
-        return screenshots, case_study_text
+        capture_meta = {
+            "used_fallback_selector": used_fallback_selector,
+            "behance_wall_marker": behance_wall_marker,
+            "page_url": url,
+        }
+        return screenshots, case_study_text, capture_meta
 
     def full_pipeline_scan(self, url, run_id="", candidate_role=None, genai_client=None):
         platform = self.identify_platform(url)
@@ -1133,6 +1268,35 @@ class PortfolioBrowser:
             print("🔍 Discovering projects...")
             projects = self.discover_projects(page, platform, candidate_role=candidate_role)
             print(f"✅ Discovered {len(projects)} projects.")
+
+            if candidate_role and "brand" in candidate_role.lower() and projects:
+                from app.relevance_classifier import classify_relevance
+
+                relevance, rel_meta = classify_relevance(projects)
+                metadata["relevance"] = relevance
+                metadata["relevance_meta"] = rel_meta
+                metadata["primary_focus"] = rel_meta.get("primary_focus")
+                metadata["composition_count"] = rel_meta.get("composition_count")
+                if relevance == "irrelevant":
+                    maj = rel_meta.get("majority_category", "?")
+                    share = rel_meta.get("majority_share", 0)
+                    skip_reason = (
+                        f"Dominant non-brand focus ({maj} {share:.0%} of "
+                        f"{rel_meta['n']} projects) — route to human review"
+                    )
+                    metadata["skipped"] = True
+                    metadata["skip_reason"] = skip_reason
+                    print(f"  ⏭️ Relevance pre-filter: {skip_reason}")
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+                    if browser is not None:
+                        browser.close()
+                    else:
+                        context.close()
+                    return metadata, [], folder_name
+
             # For Figma design/file: reuse this page for the single snapshot (avoid 2nd load and timeout race)
             reuse_page = None
             if platform == "figma" and ("/design/" in url or "/file/" in url) and projects:
@@ -1188,7 +1352,7 @@ class PortfolioBrowser:
                 project = queue.pop(0)
                 safe_title = "".join([c if c.isalnum() else "_" for c in project["title"]])[:30]
                 t_proj = time.perf_counter()
-                imgs, text = self.snapshot_project(
+                imgs, text, capture_meta = self.snapshot_project(
                     context, project["url"], f"proj_{slot}_{safe_title}",
                     capture_section_only=project.get("capture_section_only", False),
                     candidate_role=candidate_role,
@@ -1207,6 +1371,7 @@ class PortfolioBrowser:
                 if imgs:
                     project["screenshots"] = imgs
                     project["case_study_text"] = text
+                    project["capture_meta"] = capture_meta
                     final_projects.append(project)
                     slot += 1
                 else:

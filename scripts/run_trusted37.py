@@ -7,19 +7,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.main import run_portfolio_intelligence_pipeline
+from app.portfolio_url import normalize_portfolio_url
 
 INPUT = ROOT / "poc_batch_trusted.json"
 OUT = ROOT / "scripts" / "trusted37_results.json"
 N = 37
-
-
-def normalize_url(url: str) -> str:
-    u = (url or "").strip()
-    if not u:
-        return ""
-    if not u.startswith("http://") and not u.startswith("https://"):
-        u = "https://" + u
-    return u
 
 
 def main() -> int:
@@ -33,8 +25,31 @@ def main() -> int:
     done = {r.get("portfolio_url") for r in results if r.get("portfolio_url")}
 
     for i, r in enumerate(rows, 1):
-        url = normalize_url(r.get("portfolio", ""))
+        raw_portfolio = r.get("portfolio", "")
+        url, url_err = normalize_portfolio_url(raw_portfolio)
         if not url or url in done:
+            if url_err in {"invalid_link", "empty"}:
+                print(f"\n[{i}/{N}] {r.get('name', '—')} :: invalid_link", flush=True)
+                out = {
+                    "name": r.get("name", ""),
+                    "reviewer": r.get("reviewer", ""),
+                    "role": r.get("jobProfile", ""),
+                    "portfolio_url": raw_portfolio,
+                    "portfolio_raw": raw_portfolio,
+                    "designer_score": int(r.get("score", 0) or 0),
+                    "status": "invalid_link",
+                    "error": (
+                        "No Behance URL found in multi-link portfolio field"
+                        if url_err == "invalid_link"
+                        else "Empty portfolio field"
+                    ),
+                }
+                results.append(out)
+                OUT.write_text(
+                    json.dumps({"input_file": str(INPUT), "target_n": N, "results": results}, indent=2, ensure_ascii=False)
+                    + "\n",
+                    encoding="utf-8",
+                )
             continue
         print(f"\n[{i}/{N}] {r.get('name', '—')} :: {url}", flush=True)
         out = {
@@ -42,6 +57,7 @@ def main() -> int:
             "reviewer": r.get("reviewer", ""),
             "role": r.get("jobProfile", ""),
             "portfolio_url": url,
+            "portfolio_raw": raw_portfolio,
             "designer_score": int(r.get("score", 0) or 0),
             "status": "pending",
         }

@@ -26,6 +26,8 @@ RANDOM_SEED = 42
 # Stratified sample sizes: score 1,2,3,4,5
 SAMPLE_COUNTS = {1: 10, 2: 10, 3: 10, 4: 10, 5: 5}
 
+from app.portfolio_url import normalize_portfolio_url
+
 # Non-portfolio domains: do not run pipeline (login walls, social profiles, etc.)
 SKIP_DOMAINS = ("linkedin.com", "instagram.com", "twitter.com", "facebook.com", "x.com")
 
@@ -42,14 +44,8 @@ def is_skip_domain(url: str) -> bool:
 
 
 def normalize_url(portfolio: str) -> str:
-    if not portfolio or not isinstance(portfolio, str):
-        return ""
-    p = portfolio.strip()
-    if not p:
-        return ""
-    if p.startswith("http://") or p.startswith("https://"):
-        return p
-    return "https://" + p
+    url, _err = normalize_portfolio_url(portfolio)
+    return url
 
 
 def designer_recommendation(score: int) -> str:

@@ -10,6 +10,10 @@ def _numeric_score(res):
     return int(s) if s else 0
 
 
+def _is_insufficient(res):
+    return bool(res.get("insufficient_content"))
+
+
 def aggregate_scores(project_results):
     """
     Aggregates individual project analysis into a candidate-level scorecard.
@@ -17,11 +21,44 @@ def aggregate_scores(project_results):
     if not project_results:
         return {
             "specialization_split": {},
-            "average_quality_score": 0,
-            "seniority_estimate": "Unknown",
+            "average_quality_score": None,
             "top_standout_projects": [],
-            "hire_recommendation": "Pass",
-            "summary_reasoning": "No projects found or analysis failed."
+            "hire_recommendation": "Route to human review",
+            "summary_reasoning": "No projects found or analysis failed.",
+            "insufficient_content": True,
+        }
+
+    insufficient_results = [r for r in project_results if _is_insufficient(r)]
+    if len(insufficient_results) == len(project_results):
+        all_reasons: list[str] = []
+        for r in project_results:
+            all_reasons.extend(r.get("reasons") or [])
+        reason_summary = "; ".join(dict.fromkeys(all_reasons)) or "capture quality below threshold"
+        standouts = []
+        for res in project_results:
+            standouts.append({
+                "title": res.get("project_title", "Untitled"),
+                "score": None,
+                "category": "Unknown",
+                "reasoning": "",
+                "role_fit_note": "",
+                "confidence": "low",
+                "next_level_delta": "",
+                "strengths": [],
+                "weaknesses": [],
+                "error": res.get("error"),
+                "insufficient_content": True,
+                "reasons": res.get("reasons") or [],
+            })
+        return {
+            "specialization_split": {},
+            "average_quality_score": None,
+            "top_standout_projects": standouts[:3],
+            "hire_recommendation": "Route to human review",
+            "summary_reasoning": (
+                f"Insufficient capture quality — route to human review. ({reason_summary})"
+            ),
+            "insufficient_content": True,
         }
 
     categories = {}
@@ -32,8 +69,14 @@ def aggregate_scores(project_results):
     strength_counts = {}
     next_level_notes = []
 
-    # Successful results only for scoring
-    valid_results = [r for r in project_results if "error" not in r and _numeric_score(r) > 0]
+    # Successful results only for scoring (exclude errors and insufficient captures)
+    valid_results = [
+        r
+        for r in project_results
+        if "error" not in r
+        and not _is_insufficient(r)
+        and _numeric_score(r) > 0
+    ]
     total_valid = len(valid_results)
     
     for res in project_results:
@@ -67,28 +110,30 @@ def aggregate_scores(project_results):
             next_level_notes.append(delta)
         standout_projects.append({
             "title": res.get("project_title", "Untitled"),
-            "score": score,
+            "score": None if _is_insufficient(res) else score,
             "category": cat,
             "reasoning": reasoning,
             "role_fit_note": (res.get("role_fit_note") or "").strip(),
-            "confidence": (res.get("confidence") or "medium"),
+            "confidence": (res.get("confidence") or "low"),
             "next_level_delta": delta,
             "strengths": [x for x in (res.get("quality_indicators") or []) if isinstance(x, str)],
             "weaknesses": [x for x in (res.get("weaknesses") or []) if isinstance(x, str)],
-            "error": res.get("error")
+            "error": res.get("error"),
+            "insufficient_content": _is_insufficient(res),
+            "reasons": res.get("reasons") or [],
         })
 
-    # Sort and pick top 3
-    standout_projects.sort(key=lambda x: x['score'], reverse=True)
+    # Sort and pick top 3 (insufficient entries sort last via score 0)
+    standout_projects.sort(key=lambda x: (x["score"] is None, -(x["score"] or 0)))
     top_standouts = standout_projects[:3]
 
     # Specialization percentage (based on total discovered)
     total_discovered = len(project_results)
     specialization = {cat: round((count / total_discovered) * 100, 2) for cat, count in categories.items()}
     
-    # Final Seniority Estimate
-    seniority_estimate = max(seniority_counts, key=seniority_counts.get).capitalize()
-    
+    # Seniority counts kept for internal use; not surfaced on the candidate scorecard.
+    _ = max(seniority_counts, key=seniority_counts.get)
+
     # Portfolio score: strict mean of all valid project scores (no best-2 uplift).
     # e.g. 3 + 2 + 2 → 7/3 ≈ 2.33 → Pass (< Shortlist threshold).
     if total_valid > 0:
@@ -108,16 +153,19 @@ def aggregate_scores(project_results):
     top_gaps = [k for k, _ in sorted(weakness_counts.items(), key=lambda x: x[1], reverse=True)[:3]]
     next_step = next_level_notes[0] if next_level_notes else "Increase strategic depth and consistency across core projects."
     primary_focus = max(categories, key=categories.get) if categories else "N/A"
+    if not top_strengths:
+        strengths_text = "none identified"
+    else:
+        strengths_text = "; ".join(top_strengths)
     summary_parts = [
-        f"Role-fit summary: {seniority_estimate} level with primary focus on {primary_focus}.",
-        f"Strengths: {'; '.join(top_strengths) if top_strengths else 'No clear repeated strengths captured.'}",
-        f"Gaps: {'; '.join(top_gaps) if top_gaps else 'No repeated critical gaps captured.'}",
+        f"Role-fit summary: primary focus on {primary_focus}.",
+        f"Strengths: {strengths_text}",
+        f"Gaps: {'; '.join(top_gaps) if top_gaps else 'none identified'}",
         f"To reach next level: {next_step}",
     ]
     return {
         "specialization_split": specialization,
         "average_quality_score": consistency_score,
-        "seniority_estimate": seniority_estimate,
         "top_standout_projects": top_standouts,
         "hire_recommendation": recommendation,
         "summary_reasoning": " ".join(summary_parts) + f" (Based on {total_valid}/{total_discovered} analyzed projects)"

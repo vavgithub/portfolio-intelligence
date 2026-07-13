@@ -1,0 +1,85 @@
+{
+  "model_name": "gemini-2.5-flash",
+  "empty_strengths_max_score": 2,
+  "shortlist_ready_message": "no significant gaps — ready to shortlist",
+  "shortlist_min_score": 4,
+  "relevance": {
+    "dominance_threshold": 0.7,
+    "reject_exempt_categories": ["Brand Identity", "Other"],
+    "primary_focus_brand_min": 0.5,
+    "primary_focus_multi_min": 0.15,
+    "brand_category": "Brand Identity",
+    "multi_disciplinary_label": "Multi-disciplinary"
+  },
+  "content_sufficiency": {
+    "min_case_study_chars": 200,
+    "min_loaded_images": 2,
+    "min_natural_width": 200
+  },
+  "behance": {
+    "reserved_paths": [
+      "gallery", "search", "joblist", "resources", "fonts", "hire", "learn",
+      "galleries", "collections", "teams", "login", "signup", "pro", "assets"
+    ],
+    "portfolio_container_slugs": [
+      "portfolio", "portfolios", "projects", "project", "work", "works",
+      "my-work", "my-portfolio"
+    ],
+    "portfolio_container_titles": [
+      "portfolio", "portfolios", "projects", "project", "work", "works",
+      "my portfolio", "my work", "selected work", "all projects",
+      "behance portfolio", "portfolio showcase", "creative portfolio"
+    ],
+    "wall_phrases": [
+      "you must sign in or sign up for behance to view",
+      "sign in to view this project",
+      "log in to view this project",
+      "join behance to view this project",
+      "sign up to view this project",
+      "create an account to view this project",
+      "sign in to view projects containing"
+    ]
+  },
+  "role_to_categories": {
+    "ui ux": ["UI UX"],
+    "ui/ux": ["UI UX"],
+    "brand designer": ["Brand Identity", "Graphic", "Illustration"],
+    "brand design": ["Brand Identity", "Graphic", "Illustration"],
+    "motion designer": ["Motion"],
+    "motion design": ["Motion"],
+    "graphic designer": ["Graphic"],
+    "graphic design": ["Graphic"]
+  },
+  "project_classification": [
+    {
+      "category": "Motion",
+      "keywords": ["showreel", "reel", "motion", "animation", "after effects", "motion graphic", "kinetic"]
+    },
+    {
+      "category": "Brand Identity",
+      "keywords": ["brand", "logo", "identity", "visual identity", "branding"]
+    },
+    {
+      "category": "UI UX",
+      "keywords": ["ui", "ux", "uiux", "ui/ux", "app", "application", "interface", "figma", "wireframe", "user flow", "case study"]
+    },
+    {
+      "category": "Graphic",
+      "keywords": ["graphic", "poster", "print", "editorial", "typography", "layout"]
+    },
+    {
+      "category": "Illustration",
+      "keywords": ["illustration", "digital painting", "character design", "drawing", "artwork", "campaign"]
+    }
+  ],
+  "brand_project_selection": {
+    "positive_keywords": [
+      "brand", "branding", "identity", "logo", "visual identity", "packaging",
+      "typography", "guideline", "guidelines", "campaign", "naming"
+    ],
+    "negative_keywords": [
+      "ui", "ux", "uiux", "ui/ux", "case study", "wireframe", "user flow", "dashboard",
+      "app design", "website ui", "mobile app", "saas"
+    ]
+  }
+}

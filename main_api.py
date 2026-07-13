@@ -28,6 +28,7 @@ class JobStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
+    NEEDS_HUMAN_REVIEW = "needs_human_review"
 
 
 logger = logging.getLogger(__name__)
@@ -116,10 +117,18 @@ def _run_pipeline_sync(
 
     fc = report.get("final_scorecard") or {}
     skipped = report.get("status") == JobStatus.SKIPPED
+    needs_human_review = (
+        report.get("status") == JobStatus.NEEDS_HUMAN_REVIEW
+        or bool(fc.get("insufficient_content"))
+    )
 
     # Per-project confidence from standouts
     standouts = fc.get("top_standout_projects") or []
-    scored = [p for p in standouts if not p.get("error")]
+    scored = [
+        p
+        for p in standouts
+        if not p.get("error") and not p.get("insufficient_content")
+    ]
     projects_scored = len(scored)
 
     confidence_rank = {"high": 3, "medium": 2, "low": 1}
@@ -160,6 +169,16 @@ def _run_pipeline_sync(
             "result": {
                 "status": JobStatus.SKIPPED,
                 **payload,
+            },
+        }
+    if needs_human_review:
+        return {
+            "ok": True,
+            "result": {
+                "status": JobStatus.NEEDS_HUMAN_REVIEW,
+                **payload,
+                "recommendation": str(fc.get("hire_recommendation", "Route to human review")),
+                "reasoning": str(fc.get("summary_reasoning", "")),
             },
         }
     return {

@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from app.browser_capture import PortfolioBrowser
-from app.analyzer import analyze_portfolio_visuals, get_max_workers, AI_MODEL_NAME, genai_client
+from app.analyzer import analyze_portfolio_visuals, get_max_workers, _model_name, genai_client
 from app.scoring import aggregate_scores
 from dotenv import load_dotenv
 
@@ -19,15 +19,24 @@ MAX_PROJECTS_TO_ANALYZE = max(1, int(os.getenv("MAX_PROJECTS_TO_ANALYZE", "3")))
 def analyze_single_project(project, design_specs=None, candidate_role=None):
     """Worker for parallel analysis."""
     print(f"  👁️ Analyzing (AI): {project['title']}")
+    capture_meta = project.get("capture_meta") or {}
     analysis = analyze_portfolio_visuals(
         project['screenshots'], 
         project['title'], 
         project.get('case_study_text', ""),
         design_specs=design_specs,
-        candidate_role=candidate_role
+        candidate_role=candidate_role,
+        used_fallback_selector=bool(capture_meta.get("used_fallback_selector")),
+        page_url=capture_meta.get("page_url") or project.get("url"),
+        behance_wall_marker=capture_meta.get("behance_wall_marker"),
     )
     analysis['project_title'] = project['title']
-    if "error" in analysis:
+    if analysis.get("insufficient_content"):
+        print(
+            f"  ⏭️ Insufficient content for {project['title']}: "
+            f"{'; '.join(analysis.get('reasons') or [])}"
+        )
+    elif "error" in analysis:
         print(f"  ❌ AI Error for {project['title']}: {analysis['error']}")
     else:
         print(f"  ✅ AI Score for {project['title']}: {analysis.get('score', 'N/A')}")
@@ -59,7 +68,6 @@ def run_portfolio_intelligence_pipeline(url, candidate_role=None, max_projects: 
             "visual_analysis_results": [],
             "final_scorecard": {
                 "average_quality_score": None,
-                "seniority_estimate": "Unknown",
                 "hire_recommendation": "Route to human review",
                 "summary_reasoning": metadata.get("skip_reason", "Skipped — route to human review."),
             },
@@ -74,6 +82,30 @@ def run_portfolio_intelligence_pipeline(url, candidate_role=None, max_projects: 
             extra={"original": len(projects), "capped": max_projects},
         )
         projects = projects[:max_projects]
+
+    if not projects:
+        print("\n" + "✨" * 5 + " CANDIDATE INSIGHT " + "✨" * 5)
+        print(f"👤 Name: {metadata.get('name', 'N/A')}")
+        print("⏭️ Status: Insufficient capture — route to human review")
+        print("✨" * 21 + "\n")
+        return {
+            "model_used": None,
+            "candidate_identity": metadata,
+            "visual_analysis_results": [],
+            "final_scorecard": {
+                "specialization_split": {},
+                "average_quality_score": None,
+                "top_standout_projects": [],
+                "hire_recommendation": "Route to human review",
+                "summary_reasoning": (
+                    "Insufficient capture quality — no projects could be scored. "
+                    "Route to human review."
+                ),
+                "insufficient_content": True,
+            },
+            "run_id": run_id,
+            "status": "needs_human_review",
+        }
 
     # Stage 4: Parallel Vision AI Analysis
     max_workers = get_max_workers()
@@ -92,11 +124,14 @@ def run_portfolio_intelligence_pipeline(url, candidate_role=None, max_projects: 
     # Stage 5: Scoring & Output
     print("📊 Aggregating and finalizing report...")
     final_scorecard = aggregate_scores(project_analyses)
+
+    report_status = "completed"
+    if final_scorecard.get("insufficient_content"):
+        report_status = "needs_human_review"
     
     # Live Terminal Summary
     print("\n" + "✨" * 5 + " CANDIDATE INSIGHT " + "✨" * 5)
     print(f"👤 Name: {metadata.get('name', 'N/A')}")
-    print(f"🎓 Seniority: {final_scorecard.get('seniority_estimate', 'N/A')}")
     print(f"⭐ Quality Score: {final_scorecard.get('average_quality_score', 0)}/5")
     print(f"🎯 Recommendation: {final_scorecard.get('hire_recommendation', 'N/A')}")
     print(f"📝 Summary: {final_scorecard.get('summary_reasoning', 'N/A')}")
@@ -108,17 +143,17 @@ def run_portfolio_intelligence_pipeline(url, candidate_role=None, max_projects: 
             "name": metadata.get("name", "N/A"),
             "quality_score": final_scorecard.get("average_quality_score", 0),
             "recommendation": final_scorecard.get("hire_recommendation", "N/A"),
-            "seniority": final_scorecard.get("seniority_estimate", "N/A"),
             "max_projects": max_projects,
         },
     )
     
     return {
-        "model_used": AI_MODEL_NAME,
+        "model_used": _model_name(),
         "candidate_identity": metadata,
         "visual_analysis_results": project_analyses,
         "final_scorecard": final_scorecard,
-        "run_id": run_id
+        "run_id": run_id,
+        "status": report_status,
     }
 
 if __name__ == "__main__":
