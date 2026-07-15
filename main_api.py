@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from enum import Enum
 
 from fastapi import FastAPI, Request
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.main import run_portfolio_intelligence_pipeline
+from app.prompt_evolution import run_prompt_evolution
 
 
 class JobStatus(str, Enum):
@@ -35,6 +37,8 @@ logger = logging.getLogger(__name__)
 
 MAX_INSTANCES = int(os.getenv("MAX_INSTANCES", "1"))
 MAX_PROJECTS_TO_ANALYZE = max(1, int(os.getenv("MAX_PROJECTS_TO_ANALYZE", "3")))
+_EVOLUTION_INTERVAL_SEC = 24 * 60 * 60
+_evolution_running = False
 
 # Single-process only. Safe while MAX_INSTANCES=1. Replace with Redis when scaling.
 results_store = {}
@@ -47,6 +51,51 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def run_evolution_guarded() -> None:
+    global _evolution_running
+    if _evolution_running:
+        logger.warning("prompt_evolution_skipped_overlap")
+        return
+    _evolution_running = True
+    started_at = datetime.now(timezone.utc).isoformat()
+    logger.info("prompt_evolution_scheduler_start", extra={"started_at": started_at})
+    try:
+        result = await asyncio.to_thread(run_prompt_evolution)
+        result = result or {}
+        logger.info(
+            "prompt_evolution_scheduler_done",
+            extra={
+                "started_at": started_at,
+                "status": result.get("status"),
+                "examples": result.get("examples", 0),
+                "agreements": result.get("agreements"),
+                "corrections": result.get("corrections"),
+            },
+        )
+    except Exception as e:
+        logger.error(
+            "prompt_evolution_scheduler_error",
+            extra={"error": str(e), "started_at": started_at},
+        )
+    finally:
+        _evolution_running = False
+
+
+async def _evolution_scheduler_loop() -> None:
+    while True:
+        await run_evolution_guarded()
+        await asyncio.sleep(_EVOLUTION_INTERVAL_SEC)
+
+
+@app.on_event("startup")
+async def _start_evolution_scheduler() -> None:
+    asyncio.create_task(_evolution_scheduler_loop())
+    logger.info(
+        "prompt_evolution_scheduler_armed",
+        extra={"interval_sec": _EVOLUTION_INTERVAL_SEC},
+    )
 
 @app.middleware("http")
 async def add_ngrok_header(request, call_next):
