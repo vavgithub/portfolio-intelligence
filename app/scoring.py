@@ -98,11 +98,11 @@ def aggregate_scores(project_results):
         # Standout projects
         reasoning = res.get("reasoning") or res.get("Overall project score reasoning") or ""
         for w in (res.get("weaknesses") or []):
-            if isinstance(w, str) and w.strip():
+            if isinstance(w, str) and w.strip() and score <= 3:
                 key = w.strip()
                 weakness_counts[key] = weakness_counts.get(key, 0) + 1
         for q in (res.get("quality_indicators") or []):
-            if isinstance(q, str) and q.strip():
+            if isinstance(q, str) and q.strip() and score >= 3:
                 key = q.strip()
                 strength_counts[key] = strength_counts.get(key, 0) + 1
         delta = (res.get("next_level_delta") or "").strip()
