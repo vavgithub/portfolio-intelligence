@@ -166,12 +166,7 @@ def _run_pipeline_sync(
 
     fc = report.get("final_scorecard") or {}
     skipped = report.get("status") == JobStatus.SKIPPED
-    needs_human_review = (
-        report.get("status") == JobStatus.NEEDS_HUMAN_REVIEW
-        or bool(fc.get("insufficient_content"))
-    )
 
-    # Per-project confidence from standouts
     standouts = fc.get("top_standout_projects") or []
     scored = [
         p
@@ -180,38 +175,44 @@ def _run_pipeline_sync(
     ]
     projects_scored = len(scored)
 
-    confidence_rank = {"high": 3, "medium": 2, "low": 1}
-
-    # Signal 1 — data completeness
-    if projects_scored >= 3:
-        data_confidence = "high"
-    elif projects_scored == 2:
-        data_confidence = "medium"
-    else:
-        data_confidence = "low"
-
-    # Signal 2 — Gemini's own certainty (minimum across projects)
-    if scored:
-        gemini_confidence = min(
-            scored,
-            key=lambda p: confidence_rank.get(p.get("confidence", "low"), 1),
-        ).get("confidence", "low")
-    else:
-        gemini_confidence = "low"
-
-    # Final — take the worse of the two signals
-    final_confidence = min(
-        [data_confidence, gemini_confidence],
-        key=lambda c: confidence_rank.get(c, 1),
+    # Access failure (wall / zero screenshots / zero projects) vs thin-but-valid capture.
+    # Thin-content reasons (short text, few images, missing content container) are NOT access failures.
+    # Literals from assess_capture_quality in content_sufficiency.py:
+    #   f"behance login/paywall detected ({wall_marker})"
+    #   "zero screenshots captured"
+    _ACCESS_FAILURE_MARKERS = (
+        "behance login/paywall detected",
+        "zero screenshots captured",
+    )
+    analyses = report.get("visual_analysis_results") or []
+    access_reasons: list[str] = []
+    for item in analyses:
+        access_reasons.extend(item.get("reasons") or [])
+    for item in standouts:
+        access_reasons.extend(item.get("reasons") or [])
+    has_access_failure_reason = any(
+        any(marker in (reason or "").lower() for marker in _ACCESS_FAILURE_MARKERS)
+        for reason in access_reasons
+    )
+    zero_projects_discovered = (
+        projects_scored == 0
+        and not analyses
+        and (
+            report.get("status") == JobStatus.NEEDS_HUMAN_REVIEW
+            or bool(fc.get("insufficient_content"))
+        )
+    )
+    is_access_failure = projects_scored == 0 and (
+        zero_projects_discovered or has_access_failure_reason
     )
 
     payload = {
         "score": fc.get("average_quality_score"),
         "recommendation": str(fc.get("hire_recommendation", "")),
         "reasoning": str(fc.get("summary_reasoning", "")),
-        "confidence": final_confidence,
         "projects_scored": projects_scored,
     }
+    # Relevance-classifier / Drive / other pipeline skips — unchanged
     if skipped:
         return {
             "ok": True,
@@ -220,16 +221,17 @@ def _run_pipeline_sync(
                 **payload,
             },
         }
-    if needs_human_review:
+    if is_access_failure:
         return {
             "ok": True,
             "result": {
-                "status": JobStatus.NEEDS_HUMAN_REVIEW,
+                "status": "awaiting_discovery",
                 **payload,
                 "recommendation": str(fc.get("hire_recommendation", "Route to human review")),
                 "reasoning": str(fc.get("summary_reasoning", "")),
             },
         }
+    # Scored (>=1) OR thin-but-valid (captured, possibly null score) → completed
     return {
         "ok": True,
         "result": {
